@@ -398,3 +398,10 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Ignorar el archivo .env
+.env
+
+# Otras entradas
+node_modules/
+dist/
