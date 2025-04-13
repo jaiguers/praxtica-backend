@@ -38,7 +38,7 @@ export class User {
 
   @Prop({ type: Object })
   subscriptionDetails: {
-    plan: 'monthly' | 'annual' | 'enterprise';
+    plan: 'free' | 'monthly' | 'annual' | 'enterprise';
     startDate: Date;
     endDate: Date;
     seats?: number; // Para plan enterprise
@@ -54,6 +54,9 @@ export class User {
     startedAt: Date;
     lastUpdated: Date;
   }[];
+
+  @Prop({ default: 1 })
+  ranking: number;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User); 

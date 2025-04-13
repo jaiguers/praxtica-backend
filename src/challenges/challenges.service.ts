@@ -4,13 +4,15 @@ import { Model } from 'mongoose';
 import { Challenge, ChallengeDocument, ChallengeStep, Task } from '../schemas/challenge.schema';
 import { GitHubService } from './github.service';
 import { TestResult } from './github.service';
+import { UserService } from '../auth/services/user.service';
 
 @Injectable()
 export class ChallengesService {
   constructor(
     @InjectModel(Challenge.name) private challengeModel: Model<ChallengeDocument>,
     private readonly githubService: GitHubService,
-  ) {}
+    private readonly userService: UserService,
+  ) { }
 
   async getAllChallenges(): Promise<ChallengeDocument[]> {
     return this.challengeModel.find({ active: true }).exec();
@@ -26,13 +28,13 @@ export class ChallengesService {
       challengeData.type = 'git'; // Tipo por defecto
     }
 
-    // Si el tipo es "ingles", no debe tener pasos
-    if (challengeData.type === 'ingles') {
+    // Si el tipo es "english", no debe tener pasos
+    if (challengeData.type === 'english') {
       challengeData.steps = [];
     } else {
       // Para desafíos de tipo "git", asegurarse de que los pasos "Introduccion" y "Configurar Repo" estén presentes
       const steps = challengeData.steps || [];
-      
+
       // Verificar si ya existe un paso de introducción
       const hasIntro = steps.some(step => step.title === 'Introduccion');
       if (!hasIntro) {
@@ -40,6 +42,7 @@ export class ChallengesService {
           title: 'Introduccion',
           description: 'Introducción al desafío',
           status: 'pending',
+          isActive: true,
           tabs: {
             instructions: {
               text: 'Instrucciones de introducción',
@@ -52,7 +55,7 @@ export class ChallengesService {
           }
         });
       }
-      
+
       // Verificar si ya existe un paso de configuración de repositorio
       const hasRepoSetup = steps.some(step => step.title === 'Configurar Repo');
       if (!hasRepoSetup) {
@@ -62,6 +65,7 @@ export class ChallengesService {
           title: 'Configurar Repo',
           description: 'Configuración del repositorio',
           status: 'pending',
+          isActive: false,
           tabs: {
             instructions: {
               text: 'Instrucciones para configurar el repositorio',
@@ -74,10 +78,10 @@ export class ChallengesService {
           }
         });
       }
-      
+
       challengeData.steps = steps;
     }
-    
+
     const newChallenge = new this.challengeModel(challengeData);
     return newChallenge.save();
   }
@@ -90,7 +94,7 @@ export class ChallengesService {
 
     // Verificar que el desafío sea de tipo "git"
     if (challenge.type !== 'git') {
-      throw new Error('Los desafíos de tipo "ingles" no tienen pasos');
+      throw new Error('Los desafíos de tipo "english" no tienen pasos');
     }
 
     if (stepId < 0 || stepId >= challenge.steps.length) {
@@ -108,16 +112,110 @@ export class ChallengesService {
     return challenge.save();
   }
 
-  async verifyChallenge(challengeId: string, stepId: number, githubUsername: string): Promise<{ success: boolean; message: string; testResults: TestResult[] }> {
+  async checkUsageLimits(userId: string, challengeType: string): Promise<boolean> {
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new Error('Usuario no encontrado');
+    }
+
+    // Verificar si la suscripción está activa
+    if (user.subscription.plan !== 'free') {
+      const currentDate = new Date();
+      return (user.subscription.endDate < currentDate); // No hay límites para planes pagos activos
+    }
+
+    if (challengeType === 'english') {
+      const progress = user.challengeProgress.find(p => p.language === 'english');
+      if (!progress) {
+        return true; // Primer uso
+      }
+      return progress.completedSteps.length < 5;
+    } else if (challengeType === 'git') {
+      const progress = user.challengeProgress.find(p => p.language === 'git');
+      if (!progress) {
+        return true; // Primer uso
+      }
+      return progress.currentStep < 4;
+    }
+
+    return true;
+  }
+
+  async updateChallengeProgress(userId: string, challengeId: string, stepId: number, feedback?: { type: string }): Promise<void> {
+    const user = await this.userService.findById(userId);
+    if (!user) {
+      throw new Error('Usuario no encontrado');
+    }
+
+    const challenge = await this.challengeModel.findById(challengeId);
+    if (!challenge) {
+      throw new Error('Desafío no encontrado');
+    }
+
+    const existingProgressIndex = user.challengeProgress.findIndex(p => p.challengeId === challengeId);
+    
+    if (existingProgressIndex !== -1) {
+      const existingProgress = user.challengeProgress[existingProgressIndex];
+      
+      if (!existingProgress.completedSteps.includes(stepId)) {
+        // Actualizar el progreso existente
+        existingProgress.completedSteps.push(stepId);
+        existingProgress.currentStep = stepId;
+        existingProgress.lastUpdated = new Date();
+        
+        // Actualizar el array challengeProgress del usuario
+        user.challengeProgress[existingProgressIndex] = existingProgress;
+        
+        // Incrementar ranking según el tipo de desafío
+        if (challenge.type === 'git' && challenge.steps[stepId].status === 'completed') {
+          await this.userService.incrementRanking(userId);
+        } else if (challenge.type === 'english' && feedback?.type === 'perfect') {
+          await this.userService.incrementRanking(userId);
+        }
+      }
+    } else {
+      // Crear nuevo progreso
+      user.challengeProgress.push({
+        challengeId,
+        language: challenge.type,
+        currentStep: stepId,
+        completedSteps: [stepId],
+        startedAt: new Date(),
+        lastUpdated: new Date()
+      });
+      
+      // Incrementar ranking según el tipo de desafío
+      if (challenge.type === 'git' && challenge.steps[stepId].status === 'completed') {
+        await this.userService.incrementRanking(userId);
+      } else if (challenge.type === 'english' && feedback?.type === 'perfect') {
+        await this.userService.incrementRanking(userId);
+      }
+    }
+
+    // Guardar los cambios en la base de datos
+    await user.save();
+  }
+
+  async verifyChallenge(challengeId: string, stepId: number, githubUsername: string, userId: string): Promise<{ success: boolean; message: string; testResults: TestResult[] }> {
     try {
       const challenge = await this.challengeModel.findById(challengeId);
       if (!challenge) {
         throw new Error('Desafío no encontrado');
       }
 
+      // Verificar límites de uso
+      const canProceed = await this.checkUsageLimits(userId, challenge.type);
+      if (!canProceed) {
+        return {
+          success: false,
+          message: 'Has alcanzado el límite de uso para tu plan gratuito. Considera actualizar a un plan premium.',
+          testResults: []
+        };
+      }
+
       // Verificar que el desafío sea de tipo "git"
       if (challenge.type !== 'git') {
-        throw new Error('Los desafíos de tipo "ingles" no tienen pasos para verificar');
+        throw new Error('Los desafíos de tipo "english" no tienen pasos para verificar');
       }
 
       const verificationResult = await this.githubService.verifyRepositoryChanges(
@@ -129,6 +227,7 @@ export class ChallengesService {
       // Actualizar el estado del paso y la tarea si la verificación es exitosa
       if (verificationResult.success) {
         await this.updateStepStatus(challengeId, stepId, 'completed');
+        await this.updateChallengeProgress(userId, challengeId, stepId);
       }
 
       return {
@@ -155,7 +254,7 @@ export class ChallengesService {
 
       // Verificar que el desafío sea de tipo "git"
       if (challenge.type !== 'git') {
-        throw new Error('Los desafíos de tipo "ingles" no requieren inicialización de repositorio');
+        throw new Error('Los desafíos de tipo "english" no requieren inicialización de repositorio');
       }
 
       const repoUrl = await this.githubService.createRepository(challengeId, githubUsername);

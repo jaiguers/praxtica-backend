@@ -8,6 +8,9 @@ import { AuthService } from './auth.service';
 import { JwtService } from './jwt.service';
 import { JwtAuthGuard } from './jwt.guard';
 import { User, UserSchema } from './user.model';
+import { UserService } from './services/user.service';
+import { UsersService } from './services/users.service';
+import { UsersController } from './controllers/users.controller';
 
 @Global()
 @Module({
@@ -17,19 +20,21 @@ import { User, UserSchema } from './user.model';
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
+      useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '7d' },
+        signOptions: { expiresIn: '1d' },
       }),
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, UsersController],
   providers: [
     AuthService,
     JwtService,
     JwtAuthGuard,
+    UserService,
+    UsersService,
   ],
-  exports: [AuthService, JwtService, JwtAuthGuard, JwtModule, MongooseModule],
+  exports: [AuthService, JwtService, JwtAuthGuard, JwtModule, MongooseModule, UserService, UsersService],
 })
 export class AuthModule {} 

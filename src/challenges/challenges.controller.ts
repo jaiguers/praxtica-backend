@@ -1,11 +1,16 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Patch, Req, HttpException, HttpStatus } from '@nestjs/common';
 import { ChallengesService } from './challenges.service';
 import { Challenge } from '../schemas/challenge.schema';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 
+interface CheckUsageResponse {
+  success: boolean;
+  message: string;
+}
+
 @Controller('api/challenges')
 export class ChallengesController {
-  constructor(private readonly challengesService: ChallengesService) {}
+  constructor(private readonly challengesService: ChallengesService) { }
 
   @Get()
   @UseGuards(JwtAuthGuard)
@@ -14,6 +19,7 @@ export class ChallengesController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   async getChallengeById(@Param('id') id: string): Promise<Challenge> {
     return this.challengesService.getChallengeById(id);
   }
@@ -30,18 +36,28 @@ export class ChallengesController {
     @Param('id') challengeId: string,
     @Param('stepId') stepId: number,
     @Body('status') status: string,
+    @Req() req: any,
   ): Promise<Challenge> {
-    return this.challengesService.updateStepStatus(challengeId, stepId, status);
+    // Verificar límites de uso
+    const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, 'git');
+    if (!canProceed) {
+      throw new Error('Has alcanzado el límite de uso para tu plan gratuito. Considera actualizar a un plan premium.');
+    }
+
+    const challenge = await this.challengesService.updateStepStatus(challengeId, stepId, status);
+    await this.challengesService.updateChallengeProgress(req.user.sub, challengeId, stepId);
+    return challenge;
   }
 
-  @Get(':id/verify')
+  @Post(':id/verify')
   @UseGuards(JwtAuthGuard)
   async verifyChallenge(
     @Param('id') challengeId: string,
-    @Query('stepId') stepId: number,
-    @Query('githubUsername') githubUsername: string,
+    @Body('stepId') stepId: number,
+    @Body('githubUsername') githubUsername: string,
+    @Req() req: any,
   ) {
-    return this.challengesService.verifyChallenge(challengeId, stepId, githubUsername);
+    return this.challengesService.verifyChallenge(challengeId, stepId, githubUsername, req.user.sub);
   }
 
   @Get(':id/initialize')
@@ -51,5 +67,87 @@ export class ChallengesController {
     @Query('githubUsername') githubUsername: string,
   ) {
     return this.challengesService.initializeRepository(challengeId, githubUsername);
+  }
+
+  @Post(':id/feedback')
+  @UseGuards(JwtAuthGuard)
+  async updateChallengeFeedback(
+    @Param('id') challengeId: string,
+    @Body('stepId') stepId: number,
+    @Body('feedback') feedback: { type: string },
+    @Req() req: any,
+  ) {
+    // Verificar límites de uso
+    const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, 'english');
+    if (!canProceed) {
+      return {
+        success: false,
+        message: 'Has alcanzado el límite de uso para tu plan gratuito. Considera actualizar a un plan premium.',
+        testResults: []
+      };
+    }
+
+    await this.challengesService.updateChallengeProgress(req.user.sub, challengeId, stepId, feedback);
+    return { success: true };
+  }
+
+  @Post(':id/updateChallengeGit')
+  @UseGuards(JwtAuthGuard)
+  async updateChallengeGit(
+    @Param('id') challengeId: string,
+    @Body('stepId') stepId: number,
+    @Req() req: any,
+  ) {
+    // Verificar límites de uso
+    const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, 'git');
+    if (!canProceed) {
+      return {
+        success: false,
+        message: 'Has alcanzado el límite de uso para tu plan gratuito. Considera actualizar a un plan premium.',
+        testResults: []
+      };
+    }
+
+    await this.challengesService.updateChallengeProgress(req.user.sub, challengeId, stepId);
+    return { success: true };
+  }
+
+  @Get('check-usage/:type')
+  @UseGuards(JwtAuthGuard)
+  async checkUsageLimits(
+    @Param('type') challengeType: string,
+    @Req() req: any,
+  ): Promise<CheckUsageResponse> {
+    try {
+      if (!req.user) {
+        throw new HttpException(
+          'Usuario no autenticado',
+          HttpStatus.UNAUTHORIZED
+        );
+      }
+
+      if (!['git', 'english'].includes(challengeType)) {
+        throw new HttpException(
+          'Tipo de desafío inválido. Debe ser "git" o "english"',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, challengeType);
+
+      return {
+        success: canProceed,
+        message: canProceed ? 'Puedes continuar con el desafío' : 'Has alcanzado el límite de uso para tu plan gratuito',
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Error al verificar los límites de uso',
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 } 

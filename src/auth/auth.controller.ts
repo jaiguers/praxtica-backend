@@ -28,6 +28,7 @@ export class AuthController {
     name: string;
     avatar: string;
     accessToken: string;
+    username: string;
   }) {
     return this.authService.registerGitHubUser(userData);
   }

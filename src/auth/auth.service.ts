@@ -67,6 +67,7 @@ export class AuthService {
         username: user.username,
         name: user.name,
         email: user.email,
+        ranking: user.ranking,
         avatarUrl: user.avatarUrl,
         subscription: user.subscription,
         challengeProgress: user.challengeProgress,
@@ -79,6 +80,7 @@ export class AuthService {
     githubId: string;
     email: string;
     name: string;
+    username: string;
     avatar: string;
     accessToken: string;
   }) {
@@ -87,7 +89,8 @@ export class AuthService {
     if (!user) {
       user = await this.userModel.create({
         githubId: userData.githubId,
-        username: userData.name,
+        username: userData.username,
+        name: userData.name,
         email: userData.email,
         avatarUrl: userData.avatar,
         githubAccessToken: userData.accessToken,
@@ -104,7 +107,7 @@ export class AuthService {
         {
           $set: {
             email: userData.email,
-            username: userData.name,
+            username: userData.username,
             avatarUrl: userData.avatar,
             githubAccessToken: userData.accessToken,
           }

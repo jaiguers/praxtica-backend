@@ -26,6 +26,9 @@ export class ChallengeStep {
   @Prop({ default: 'pending' })
   status: string;
 
+  @Prop({ default: true })
+  isActive: boolean;
+
   @Prop({ type: Object })
   tabs: {
     instructions?: {
@@ -42,12 +45,15 @@ export class Challenge {
   title: string;
 
   @Prop()
+  subtitle: string;
+
+  @Prop()
   description: string;
 
   @Prop()
   image: string;
 
-  @Prop({ required: true, enum: ['git', 'ingles'] })
+  @Prop({ required: true, enum: ['git', 'english'] })
   type: string;
 
   @Prop({ required: true, enum: ['facil', 'intermedio', 'dificil', 'Todos los niveles'] })
@@ -61,6 +67,9 @@ export class Challenge {
 
   @Prop({ default: Date.now })
   createdAt: Date;
+
+  @Prop({ default: null })
+  repoUrl: string | null;
 }
 
 export const ChallengeSchema = SchemaFactory.createForClass(Challenge); 
