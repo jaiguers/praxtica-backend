@@ -53,7 +53,7 @@ export class Challenge {
   @Prop()
   image: string;
 
-  @Prop({ required: true, enum: ['git', 'english'] })
+  @Prop({ required: true, enum: ['git', 'english', 'spanish'] })
   type: string;
 
   @Prop({ required: true, enum: ['facil', 'intermedio', 'dificil', 'Todos los niveles'] })
