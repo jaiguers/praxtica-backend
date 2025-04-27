@@ -28,8 +28,8 @@ export class ChallengesService {
       challengeData.type = 'git'; // Tipo por defecto
     }
 
-    // Si el tipo es "english", no debe tener pasos
-    if (challengeData.type === 'english') {
+    // Si el tipo es "english" o "spanish", no debe tener pasos
+    if (challengeData.type === 'english' || challengeData.type === 'spanish') {
       challengeData.steps = [];
     } else {
       // Para desafíos de tipo "git", asegurarse de que los pasos "Introduccion" y "Configurar Repo" estén presentes
@@ -94,7 +94,7 @@ export class ChallengesService {
 
     // Verificar que el desafío sea de tipo "git"
     if (challenge.type !== 'git') {
-      throw new Error('Los desafíos de tipo "english" no tienen pasos');
+      throw new Error('Los desafíos de tipo "idiomas" no tienen pasos');
     }
 
     if (stepId < 0 || stepId >= challenge.steps.length) {
@@ -124,8 +124,8 @@ export class ChallengesService {
       return (user.subscription.endDate < currentDate); // No hay límites para planes pagos activos
     }
 
-    if (challengeType === 'english') {
-      const progress = user.challengeProgress.find(p => p.language === 'english');
+    if (challengeType === 'english' || challengeType === 'spanish') {
+      const progress = user.challengeProgress.find(p => p.language === challengeType);
       if (!progress) {
         return true; // Primer uso
       }
@@ -153,23 +153,23 @@ export class ChallengesService {
     }
 
     const existingProgressIndex = user.challengeProgress.findIndex(p => p.challengeId === challengeId);
-    
+
     if (existingProgressIndex !== -1) {
       const existingProgress = user.challengeProgress[existingProgressIndex];
-      
+
       if (!existingProgress.completedSteps.includes(stepId)) {
         // Actualizar el progreso existente
         existingProgress.completedSteps.push(stepId);
         existingProgress.currentStep = stepId;
         existingProgress.lastUpdated = new Date();
-        
+
         // Actualizar el array challengeProgress del usuario
         user.challengeProgress[existingProgressIndex] = existingProgress;
-        
+
         // Incrementar ranking según el tipo de desafío
         if (challenge.type === 'git' && challenge.steps[stepId].status === 'completed') {
           await this.userService.incrementRanking(userId);
-        } else if (challenge.type === 'english' && feedback?.type === 'perfect') {
+        } else if ((challenge.type === 'english' || challenge.type === 'spanish') && feedback?.type === 'perfect') {
           await this.userService.incrementRanking(userId);
         }
       }
@@ -183,11 +183,11 @@ export class ChallengesService {
         startedAt: new Date(),
         lastUpdated: new Date()
       });
-      
+
       // Incrementar ranking según el tipo de desafío
       if (challenge.type === 'git' && challenge.steps[stepId].status === 'completed') {
         await this.userService.incrementRanking(userId);
-      } else if (challenge.type === 'english' && feedback?.type === 'perfect') {
+      } else if ((challenge.type === 'english' || challenge.type === 'spanish') && feedback?.type === 'perfect') {
         await this.userService.incrementRanking(userId);
       }
     }
@@ -215,7 +215,7 @@ export class ChallengesService {
 
       // Verificar que el desafío sea de tipo "git"
       if (challenge.type !== 'git') {
-        throw new Error('Los desafíos de tipo "english" no tienen pasos para verificar');
+        throw new Error('Los desafíos de tipo "idiomas" no tienen pasos para verificar');
       }
 
       const verificationResult = await this.githubService.verifyRepositoryChanges(
@@ -254,7 +254,7 @@ export class ChallengesService {
 
       // Verificar que el desafío sea de tipo "git"
       if (challenge.type !== 'git') {
-        throw new Error('Los desafíos de tipo "english" no requieren inicialización de repositorio');
+        throw new Error('Los desafíos de tipo "idiomas" no requieren inicialización de repositorio');
       }
 
       const repoUrl = await this.githubService.createRepository(challengeId, githubUsername);

@@ -75,10 +75,11 @@ export class ChallengesController {
     @Param('id') challengeId: string,
     @Body('stepId') stepId: number,
     @Body('feedback') feedback: { type: string },
+    @Body('type') type: string,
     @Req() req: any,
   ) {
     // Verificar límites de uso
-    const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, 'english');
+    const canProceed = await this.challengesService.checkUsageLimits(req.user.sub, type);
     if (!canProceed) {
       return {
         success: false,
@@ -126,9 +127,9 @@ export class ChallengesController {
         );
       }
 
-      if (!['git', 'english'].includes(challengeType)) {
+      if (!['git', 'english', 'spanish'].includes(challengeType)) {
         throw new HttpException(
-          'Tipo de desafío inválido. Debe ser "git" o "english"',
+          'Tipo de desafío inválido. Debe ser "git" o "english" o "spanish"',
           HttpStatus.BAD_REQUEST
         );
       }
