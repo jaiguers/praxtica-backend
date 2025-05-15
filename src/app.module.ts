@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from './auth/auth.module';
 import { ChallengesModule } from './challenges/challenges.module';
 import { OpenAIModule } from './openai/openai.module';
+import { PingModule } from './ping/ping.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { OpenAIModule } from './openai/openai.module';
     AuthModule,
     ChallengesModule,
     OpenAIModule,
+    PingModule,
   ],
 })
 export class AppModule {} 
