@@ -16,12 +16,13 @@ export class OpenAIController {
     return this.openAIService.checkSpanishGrammar(text);
   }
 
-  @Get('conversation')
+  @Post('conversation')
   async generateConversation(
     @Query('context') context: string,
-    @Query('difficulty') difficulty: 'beginner' | 'intermediate' | 'advanced' = 'intermediate'
+    @Query('difficulty') difficulty: 'beginner' | 'intermediate' | 'advanced' = 'intermediate',
+    @Body('conversationHistory') conversationHistory: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   ) {
-    return this.openAIService.generateConversation(context, difficulty);
+    return this.openAIService.generateConversation(context, difficulty, conversationHistory);
   }
 
   @Post('spanish-conversation')
