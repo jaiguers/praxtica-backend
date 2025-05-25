@@ -121,7 +121,7 @@ export class ChallengesService {
     // Verificar si la suscripción está activa
     if (user.subscription.plan !== 'free') {
       const currentDate = new Date();
-      return (user.subscription.endDate < currentDate); // No hay límites para planes pagos activos
+      return user.subscription.endDate > currentDate; // Permitir continuar si la fecha de finalización es posterior a la fecha actual
     }
 
     if (challengeType === 'english' || challengeType === 'spanish') {
