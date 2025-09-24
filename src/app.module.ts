@@ -5,6 +5,8 @@ import { AuthModule } from './auth/auth.module';
 import { ChallengesModule } from './challenges/challenges.module';
 import { OpenAIModule } from './openai/openai.module';
 import { PingModule } from './ping/ping.module';
+import { PlansModule } from './plans/plans.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -14,6 +16,8 @@ import { PingModule } from './ping/ping.module';
     ChallengesModule,
     OpenAIModule,
     PingModule,
+    PlansModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {} 
