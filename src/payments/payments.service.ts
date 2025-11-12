@@ -102,9 +102,14 @@ export class PaymentsService {
         endDate.setMonth(endDate.getMonth() + 1);
     }
 
+    const allowedPlans = ['free', 'monthly', 'annual', 'enterprise'] as const;
+    const planType = allowedPlans.includes(plan.type as any)
+      ? (plan.type as (typeof allowedPlans)[number])
+      : 'free';
+
     // Actualizar la suscripción del usuario
     user.subscription = {
-      plan: plan.type,
+      plan: planType,
       startDate,
       endDate,
       active: true,

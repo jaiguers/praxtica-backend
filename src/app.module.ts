@@ -7,6 +7,7 @@ import { OpenAIModule } from './openai/openai.module';
 import { PingModule } from './ping/ping.module';
 import { PlansModule } from './plans/plans.module';
 import { PaymentsModule } from './payments/payments.module';
+import { LanguageModule } from './language/language.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PaymentsModule } from './payments/payments.module';
     PingModule,
     PlansModule,
     PaymentsModule,
+    LanguageModule,
   ],
 })
 export class AppModule {} 
