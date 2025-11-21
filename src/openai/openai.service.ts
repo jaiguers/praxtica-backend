@@ -11,61 +11,46 @@ export interface CheckGrammarOptions {
   dialectHint?: string;
 }
 
-export type ToeflSectionType = 'reading' | 'listening' | 'speaking' | 'writing';
+export type CefrPlacementSkill = 'speaking' | 'listening' | 'reading' | 'writing';
 
-export interface ToeflAnswerChoice {
-  label: string;
-  text: string;
-  correct?: boolean;
-}
-
-export interface ToeflQuestion {
+export interface CefrPlacementQuestion {
   id: string;
   prompt: string;
-  questionType: 'multiple_choice' | 'short_answer' | 'essay' | 'speaking';
-  difficulty: 'easy' | 'medium' | 'hard';
-  passageReference?: string;
-  audioReference?: string;
-  answerChoices?: ToeflAnswerChoice[];
-  evaluationCriteria: string[];
+  questionType: 'speaking' | 'multiple_choice' | 'short_answer';
+  targetLevels: CefrLevel[];
   expectedResponseTimeSeconds: number;
-  sampleAnswer?: string;
+  audioPrompt?: string;
+  answerChoices?: {
+    label: string;
+    text: string;
+    targetLevel: CefrLevel;
+  }[];
+  evaluationCriteria: {
+    grammar: string[];
+    fluency: string[];
+    pronunciation: string[];
+    vocabulary: string[];
+  };
 }
 
-export interface ToeflSection {
-  id: string;
-  type: ToeflSectionType;
-  title: string;
-  durationMinutes: number;
-  instructions: string;
-  passages?: string[];
-  audioPrompts?: string[];
-  questions: ToeflQuestion[];
-}
-
-export interface ToeflTestBlueprint {
+export interface CefrPlacementTest {
   metadata: {
     testName: string;
-    level: CefrLevel;
-    variant: 'full' | 'short';
-    topics: string[];
     totalDurationMinutes: number;
-    skillsCovered: ToeflSectionType[];
+    topics: string[];
   };
-  sections: ToeflSection[];
-  scoringGuidelines: {
-    overallRubric: string[];
-    sectionRubrics: Record<ToeflSectionType, string[]>;
-    retakeAdvice: string[];
+  questions: CefrPlacementQuestion[];
+  scoringGuide: {
+    howToScore: string;
+    levelMapping: {
+      [K in CefrLevel]?: {
+        grammar: { min: number; max: number };
+        fluency: { min: number; max: number };
+        pronunciation: { min: number; max: number };
+        vocabulary: { min: number; max: number };
+      };
+    };
   };
-}
-
-export interface GenerateToeflTestOptions {
-  level?: CefrLevel;
-  topics?: string[];
-  focusSkills?: ToeflSectionType[];
-  variant?: 'full' | 'short';
-  includeRubric?: boolean;
 }
 
 @Injectable()
@@ -73,9 +58,9 @@ export class OpenAIService {
   private readonly logger = new Logger(OpenAIService.name);
   private readonly openai: OpenAI;
   private readonly grammarModel =
-    process.env.OPENAI_GRAMMAR_MODEL ?? 'gpt-4.1-mini';
-  private readonly toeflModel =
-    process.env.OPENAI_TOEFL_MODEL ?? 'gpt-4.1';
+    process.env.OPENAI_GRAMMAR_MODEL ?? 'gpt-4o-mini';
+  private readonly placementModel =
+    process.env.OPENAI_PLACEMENT_MODEL ?? 'gpt-4o';
 
   constructor() {
     this.openai = new OpenAI({
@@ -104,48 +89,38 @@ export class OpenAIService {
     return this.extractJson<GrammarCheckResponse>(response);
   }
 
-  async generateToeflTest(
-    options: GenerateToeflTestOptions,
-  ): Promise<ToeflTestBlueprint> {
-    const schema = this.buildToeflSchema();
-    const payload = {
-      level: options.level ?? 'auto-placement',
-      variant: options.variant ?? 'short',
-      topics: options.topics ?? [],
-      focusSkills: options.focusSkills ?? [
-        'reading',
-        'listening',
-        'speaking',
-        'writing',
-      ],
-      includeRubric: options.includeRubric ?? true,
-      targetDurationMinutes: 4,
-      scoringDimensions: ['grammar', 'fluency', 'pronunciation', 'vocabulary'],
-    };
+  async generateCefrPlacementTest(
+    options: { topics?: string[] },
+  ): Promise<CefrPlacementTest> {
+    const schema = this.buildCefrPlacementSchema();
+    const topics = options.topics?.length
+      ? options.topics.join(', ')
+      : 'general conversation, daily activities, work, hobbies';
 
     const request = [
-      'Generate a TOEFL-style assessment in English following ETS methodology.',
-      'The assessment must act as a placement test: questions should adapt from A1 to C2 difficulty.',
-      'Total duration must be approximately 4 minutes for the whole test.',
-      'Ensure scoring captures grammar, fluency, pronunciation, and vocabulary distinctly.',
-      'Use the following configuration JSON to tailor the sections:',
-      JSON.stringify(payload, null, 2),
+      'Generate a CEFR placement test in English designed to quickly determine a learner\'s level (A1, A2, B1, B2, or C1).',
+      'The test must be completed in exactly 4 minutes total.',
+      'Focus on speaking and listening skills primarily, with some reading comprehension.',
+      'Each question should target specific CEFR levels and help identify where the learner stands.',
+      `Topics to cover: ${topics}`,
+      'The test must evaluate four dimensions: grammar, fluency, pronunciation, and vocabulary.',
+      'Questions should progressively increase in difficulty to pinpoint the exact level.',
       'Return ONLY the JSON required by the schema.',
     ].join('\n\n');
 
     const response = await this.openai.responses.create({
-      model: this.toeflModel,
+      model: this.placementModel,
       instructions:
-        'You are an expert TOEFL test designer. Always align content to CEFR guidance and ensure balanced difficulty.',
+        'You are an expert CEFR test designer. Create a fast, accurate placement test that clearly distinguishes between A1, A2, B1, B2, and C1 levels.',
       input: request,
-      temperature: 0.6,
-      max_output_tokens: 1200,
+      temperature: 0.5,
+      max_output_tokens: 2000,
       text: {
         format: schema,
       },
     });
 
-    return this.extractJson<ToeflTestBlueprint>(response);
+    return this.extractJson<CefrPlacementTest>(response);
   }
 
   private extractJson<T>(response: OpenAI.Responses.Response): T {
@@ -202,16 +177,10 @@ export class OpenAIService {
     };
   }
 
-  private buildToeflSchema() {
-    const rubricArraySchema = {
-      type: 'array',
-      items: { type: 'string' },
-      minItems: 1,
-    };
-
-      return {
+  private buildCefrPlacementSchema() {
+    return {
       type: 'json_schema' as const,
-      name: 'toefl_test_blueprint',
+      name: 'cefr_placement_test',
       strict: true,
       schema: {
         type: 'object',
@@ -222,142 +191,154 @@ export class OpenAIService {
             additionalProperties: false,
             properties: {
               testName: { type: 'string' },
-              level: { type: 'string' },
-              variant: { type: 'string', enum: ['full', 'short'] },
+              totalDurationMinutes: { type: 'number', const: 4 },
               topics: {
                 type: 'array',
                 items: { type: 'string' },
-                minItems: 0,
-              },
-                totalDurationMinutes: { type: 'number' },
-                targetDurationMinutes: { type: 'number' },
-                scoringDimensions: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
-              skillsCovered: {
-                type: 'array',
-                items: {
-                  type: 'string',
-                  enum: ['reading', 'listening', 'speaking', 'writing'],
-                },
-                minItems: 1,
               },
             },
-            required: [
-              'testName',
-              'level',
-              'variant',
-              'topics',
-              'totalDurationMinutes',
-              'targetDurationMinutes',
-              'scoringDimensions',
-              'skillsCovered',
-            ],
+            required: ['testName', 'totalDurationMinutes', 'topics'],
           },
-          sections: {
+          questions: {
             type: 'array',
-            minItems: 1,
+            minItems: 3,
+            maxItems: 8,
             items: {
               type: 'object',
               additionalProperties: false,
               properties: {
                 id: { type: 'string' },
-                type: {
+                prompt: { type: 'string' },
+                questionType: {
                   type: 'string',
-                  enum: ['reading', 'listening', 'speaking', 'writing'],
+                  enum: ['speaking', 'multiple_choice', 'short_answer'],
                 },
-                title: { type: 'string' },
-                durationMinutes: { type: 'number' },
-                instructions: { type: 'string' },
-                passages: {
+                targetLevels: {
                   type: 'array',
-                  items: { type: 'string' },
-                },
-                audioPrompts: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
-                questions: {
-                  type: 'array',
+                  items: {
+                    type: 'string',
+                    enum: ['A1', 'A2', 'B1', 'B2', 'C1'],
+                  },
                   minItems: 1,
+                },
+                expectedResponseTimeSeconds: { type: 'number' },
+                audioPrompt: { type: 'string' },
+                answerChoices: {
+                  type: 'array',
                   items: {
                     type: 'object',
                     additionalProperties: false,
                     properties: {
-                      id: { type: 'string' },
-                      prompt: { type: 'string' },
-                      questionType: {
+                      label: { type: 'string' },
+                      text: { type: 'string' },
+                      targetLevel: {
                         type: 'string',
-                        enum: [
-                          'multiple_choice',
-                          'short_answer',
-                          'essay',
-                          'speaking',
-                        ],
+                        enum: ['A1', 'A2', 'B1', 'B2', 'C1'],
                       },
-                      difficulty: {
-                        type: 'string',
-                        enum: ['easy', 'medium', 'hard'],
-                      },
-                      passageReference: { type: 'string' },
-                      audioReference: { type: 'string' },
-                      answerChoices: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          additionalProperties: false,
-                          properties: {
-                            label: { type: 'string' },
-                            text: { type: 'string' },
-                            correct: { type: 'boolean' },
-                          },
-                          required: ['label', 'text'],
-                        },
-                      },
-                      evaluationCriteria: rubricArraySchema,
-                      expectedResponseTimeSeconds: { type: 'number' },
-                      sampleAnswer: { type: 'string' },
                     },
-                    required: [
-                      'id',
-                      'prompt',
-                      'questionType',
-                      'difficulty',
-                      'evaluationCriteria',
-                      'expectedResponseTimeSeconds',
-                    ],
+                    required: ['label', 'text', 'targetLevel'],
                   },
+                },
+                evaluationCriteria: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    grammar: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                    fluency: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                    pronunciation: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                    vocabulary: {
+                      type: 'array',
+                      items: { type: 'string' },
+                    },
+                  },
+                  required: [
+                    'grammar',
+                    'fluency',
+                    'pronunciation',
+                    'vocabulary',
+                  ],
                 },
               },
               required: [
                 'id',
-                'type',
-                'title',
-                'durationMinutes',
-                'instructions',
-                'questions',
+                'prompt',
+                'questionType',
+                'targetLevels',
+                'expectedResponseTimeSeconds',
+                'evaluationCriteria',
               ],
             },
           },
-          scoringGuidelines: {
+          scoringGuide: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              overallRubric: rubricArraySchema,
-              sectionRubrics: {
+              howToScore: { type: 'string' },
+              levelMapping: {
                 type: 'object',
                 additionalProperties: {
-                  type: 'array',
-                  items: { type: 'string' },
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    grammar: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        min: { type: 'number' },
+                        max: { type: 'number' },
+                      },
+                      required: ['min', 'max'],
+                    },
+                    fluency: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        min: { type: 'number' },
+                        max: { type: 'number' },
+                      },
+                      required: ['min', 'max'],
+                    },
+                    pronunciation: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        min: { type: 'number' },
+                        max: { type: 'number' },
+                      },
+                      required: ['min', 'max'],
+                    },
+                    vocabulary: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        min: { type: 'number' },
+                        max: { type: 'number' },
+                      },
+                      required: ['min', 'max'],
+                    },
+                  },
+                  required: [
+                    'grammar',
+                    'fluency',
+                    'pronunciation',
+                    'vocabulary',
+                  ],
                 },
               },
-              retakeAdvice: rubricArraySchema,
             },
-            required: ['overallRubric', 'sectionRubrics', 'retakeAdvice'],
+            required: ['howToScore', 'levelMapping'],
           },
         },
-        required: ['metadata', 'sections', 'scoringGuidelines'],
+        required: ['metadata', 'questions', 'scoringGuide'],
       },
     };
   }

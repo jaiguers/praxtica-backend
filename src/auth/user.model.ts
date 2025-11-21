@@ -4,8 +4,10 @@ export {
   UserDocument,
   LANGUAGES,
   CEFR_LEVELS,
+  AUTH_PROVIDERS,
   Language,
   CefrLevel,
+  AuthProvider,
   LanguageTest,
   LanguageTestSchema,
   PracticeSession,
@@ -18,4 +20,6 @@ export {
   VocabularyFeedbackSchema,
   FluencyFeedback,
   FluencyFeedbackSchema,
+  AuthProviderData,
+  AuthProviderDataSchema,
 } from '../schemas/user.schema';

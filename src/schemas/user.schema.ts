@@ -3,8 +3,10 @@ import { Document, Types } from 'mongoose';
 
 export const LANGUAGES = ['english', 'spanish'] as const;
 export const CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
+export const AUTH_PROVIDERS = ['github', 'gmail', 'outlook'] as const;
 export type Language = (typeof LANGUAGES)[number];
 export type CefrLevel = (typeof CEFR_LEVELS)[number];
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 
 @Schema({ _id: false })
 export class PronunciationFeedback {
@@ -219,29 +221,69 @@ export const LanguageTestSchema = SchemaFactory.createForClass(LanguageTest);
 export const PracticeSessionSchema =
   SchemaFactory.createForClass(PracticeSession);
 
+@Schema({ _id: false })
+export class AuthProviderData {
+  @Prop({ required: true, enum: AUTH_PROVIDERS })
+  provider: AuthProvider;
+
+  @Prop({ required: true })
+  providerId: string;
+
+  @Prop({ required: true })
+  accessToken: string;
+
+  @Prop()
+  refreshToken?: string;
+
+  @Prop({ required: true })
+  email: string;
+
+  @Prop({ default: Date.now })
+  connectedAt: Date;
+}
+
+export const AuthProviderDataSchema = SchemaFactory.createForClass(AuthProviderData);
+
 export type UserDocument = User & Document;
 
 @Schema()
 export class User {
   _id: Types.ObjectId;
 
-  @Prop({ required: true })
-  githubId: string;
+  @Prop()
+  githubId?: string;
+
+  @Prop({ required: true, unique: true })
+  email: string;
 
   @Prop({ required: true })
   username: string;
 
   @Prop()
-  email: string;
-
-  @Prop()
   name?: string;
 
   @Prop()
-  avatarUrl: string;
+  avatarUrl?: string;
 
   @Prop()
-  githubAccessToken: string;
+  githubAccessToken?: string;
+
+  @Prop({
+    type: Map,
+    of: AuthProviderDataSchema,
+    default: {},
+  })
+  authProviders: Map<
+    AuthProvider,
+    {
+      provider: AuthProvider;
+      providerId: string;
+      accessToken: string;
+      refreshToken?: string;
+      email: string;
+      connectedAt: Date;
+    }
+  >;
 
   @Prop({
     type: Object,

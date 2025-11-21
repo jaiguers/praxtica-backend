@@ -30,7 +30,34 @@ export class AuthController {
     accessToken: string;
     username: string;
   }) {
+    console.log('registerGitHubUser');
     return this.authService.registerGitHubUser(userData);
+  }
+
+  @Post('gmail')
+  async registerGmailUser(@Body() userData: {
+    googleId: string;
+    email: string;
+    name?: string;
+    username: string;
+    avatar: string;
+    accessToken: string;
+    refreshToken: string;
+  }) {
+    return this.authService.registerGmailUser(userData);
+  }
+
+  @Post('outlook')
+  async registerOutlookUser(@Body() userData: {
+    microsoftId: string;
+    email: string;
+    name?: string;
+    username: string;
+    avatar: string;
+    accessToken: string;
+    refreshToken: string;
+  }) {
+    return this.authService.registerOutlookUser(userData);
   }
 
   @Get('github/callback')

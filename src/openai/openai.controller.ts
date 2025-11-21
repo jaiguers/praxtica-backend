@@ -1,7 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { OpenAIService } from './openai.service';
 import { GrammarCheckDto } from './dto/grammar-check.dto';
-import { GenerateToeflTestDto } from './dto/generate-toefl-test.dto';
+import { GenerateCefrPlacementTestDto } from './dto/generate-cefr-placement-test.dto';
 
 @Controller('api/openai')
 export class OpenAIController {
@@ -12,8 +12,10 @@ export class OpenAIController {
     return this.openAIService.checkGrammar(body);
   }
 
-  @Post('toefl-test')
-  async generateToeflTest(@Body() body: GenerateToeflTestDto) {
-    return this.openAIService.generateToeflTest(body);
+  @Post('cefr-placement-test')
+  async generateCefrPlacementTest(
+    @Body() body: GenerateCefrPlacementTestDto,
+  ) {
+    return this.openAIService.generateCefrPlacementTest(body);
   }
 }
