@@ -116,10 +116,8 @@ export class OpenAIRealtimeService {
       this.setupWebSocketHandlers(session, eventEmitter);
       this.sessions.set(config.sessionId, session);
 
-      // Configurar la sesión después de conectarse
-      ws.on('open', () => {
-        this.configureSession(session);
-      });
+      // La sesión se configurará automáticamente cuando el WebSocket se abra
+      // (manejado en setupWebSocketHandlers)
 
       return session;
     } catch (error) {
@@ -143,6 +141,18 @@ export class OpenAIRealtimeService {
       this.logger.log(`WebSocket connected for session ${session.id}`);
       session.status = 'connected';
       eventEmitter.emit('connected');
+      
+      // Una vez conectado, configurar la sesión
+      this.configureSession(session);
+      
+      // Esperar a que la sesión se actualice para crear el saludo inicial
+      const sessionUpdatedHandler = () => {
+        setTimeout(() => {
+          this.createInitialResponse(session);
+          eventEmitter.removeListener('session.updated', sessionUpdatedHandler);
+        }, 300);
+      };
+      eventEmitter.once('session.updated', sessionUpdatedHandler);
     });
 
     ws.on('message', (data: Data) => {
@@ -186,7 +196,12 @@ export class OpenAIRealtimeService {
     if (session.config.mode === 'test') {
       // Modo test CEFR: evaluación formal
       if (session.config.language === 'english') {
-        systemPrompt = `You are a professional CEFR (Common European Framework of Reference) language assessor conducting a formal English placement test. Your role is to:
+        systemPrompt = `You are Maria, a professional CEFR (Common European Framework of Reference) language assessor conducting a formal English placement test. 
+
+IMPORTANT: When the conversation begins, you must greet the user first. Say: "Hello! Welcome to your placement test. I'm Maria, your assessor. Let's begin with a few questions to determine your English level. Please introduce yourself briefly and tell me a little about your background."
+
+Your role is to:
+- Start by greeting the user (this is your first message)
 - Ask structured questions that progressively increase in difficulty
 - Evaluate the user's responses across four dimensions: grammar, pronunciation, vocabulary, and fluency
 - Provide clear, specific questions that help determine the user's CEFR level (A1, A2, B1, B2, C1, C2)
@@ -194,7 +209,12 @@ export class OpenAIRealtimeService {
 - After each response, provide brief, constructive feedback
 - Do not engage in casual conversation - this is a formal assessment`;
       } else {
-        systemPrompt = `Eres un evaluador profesional de CEFR (Marco Común Europeo de Referencia) realizando un examen de nivelación formal de español. Tu rol es:
+        systemPrompt = `Eres Maria, una evaluadora profesional de CEFR (Marco Común Europeo de Referencia) realizando un examen de nivelación formal de español.
+
+IMPORTANTE: Cuando comience la conversación, debes saludar al usuario primero. Di: "¡Hola! Bienvenido a tu examen de nivelación. Soy María, tu evaluadora. Comencemos con algunas preguntas para determinar tu nivel de español. Por favor preséntate brevemente y cuéntame un poco sobre tu experiencia."
+
+Tu rol es:
+- Comenzar saludando al usuario (este es tu primer mensaje)
 - Hacer preguntas estructuradas que aumenten progresivamente en dificultad
 - Evaluar las respuestas del usuario en cuatro dimensiones: gramática, pronunciación, vocabulario y fluidez
 - Proporcionar preguntas claras y específicas que ayuden a determinar el nivel CEFR del usuario (A1, A2, B1, B2, C1, C2)
@@ -203,10 +223,20 @@ export class OpenAIRealtimeService {
 - No entablar conversación casual - esto es una evaluación formal`;
       }
     } else {
-      // Modo práctica libre: conversación natural
-      systemPrompt =
-        session.config.systemPrompt ||
-        this.defaultSystemPrompts[session.config.language];
+      // Modo práctica libre: conversación natural con saludo inicial
+      if (session.config.language === 'english') {
+        systemPrompt = `You are a helpful English language practice tutor. 
+
+IMPORTANT: When the conversation begins, you must greet the user first. Say: "Hello! I'm here to help you practice English. Let's have a natural conversation. Feel free to talk about anything you'd like, and I'll help you improve along the way. What would you like to talk about today?"
+
+Speak naturally and help the user practice English conversation. Provide corrections and feedback when appropriate, but keep the conversation flowing.`;
+      } else {
+        systemPrompt = `Eres un tutor de práctica de español amigable.
+
+IMPORTANTE: Cuando comience la conversación, debes saludar al usuario primero. Di: "¡Hola! Estoy aquí para ayudarte a practicar español. Tengamos una conversación natural. Siéntete libre de hablar sobre lo que quieras, y te ayudaré a mejorar en el camino. ¿Sobre qué te gustaría hablar hoy?"
+
+Habla de forma natural y ayuda al usuario a practicar conversación en español. Proporciona correcciones y retroalimentación cuando sea apropiado, pero mantén la conversación fluyendo.`;
+      }
     }
 
     // Enviar configuración inicial
@@ -241,12 +271,23 @@ export class OpenAIRealtimeService {
       },
     });
 
-    // Configurar handlers de turn detection
+    // La respuesta inicial se creará cuando se reciba el evento session.updated
+    // (configurado en el handler del evento 'open')
+  }
+
+  /**
+   * Crea una respuesta inicial para que el asistente salude al usuario
+   * El prompt del sistema ya incluye instrucciones para saludar primero
+   */
+  private createInitialResponse(session: RealtimeSession): void {
+    // Crear una respuesta inicial vacía que activará el saludo del asistente
+    // El prompt del sistema ya tiene las instrucciones para saludar primero
+    this.logger.log(`Creating initial response for session ${session.id}`);
+    
     this.sendEvent(session.id, {
       type: 'response.create',
       response: {
         modalities: ['text', 'audio'],
-        instructions: 'Respond naturally and conversationally.',
       },
     });
   }
