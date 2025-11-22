@@ -248,7 +248,7 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         voice: voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        temperature: session.config.temperature ?? (session.config.mode === 'test' ? 0.5 : 0.8),
+        temperature: session.config.temperature ?? (session.config.mode === 'test' ? 0.7 : 0.8),
         turn_detection: {
           type: 'server_vad',
           threshold: 0.5,

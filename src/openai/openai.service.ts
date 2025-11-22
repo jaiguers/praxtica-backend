@@ -80,7 +80,7 @@ export class OpenAIService {
       instructions:
         'You are a precise grammar and writing tutor. Always correct the input while preserving intention and tone.',
       input: prompt,
-      temperature: 0.2,
+      temperature: 0.7,
       text: {
         format: schema,
       },
@@ -113,7 +113,7 @@ export class OpenAIService {
       instructions:
         'You are an expert CEFR test designer. Create a fast, accurate placement test that clearly distinguishes between A1, A2, B1, B2, and C1 levels.',
       input: request,
-      temperature: 0.5,
+      temperature: 0.7,
       max_output_tokens: 2000,
       text: {
         format: schema,
