@@ -10,8 +10,9 @@ import {
 } from '@nestjs/websockets';
 import { Logger, UseGuards } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { JwtAuthGuard } from '../auth/jwt.guard';
+import { JwtWebSocketGuard } from '../auth/jwt-websocket.guard';
 import { OpenAIRealtimeService } from '../openai/openai-realtime.service';
+import { JwtService } from '../auth/jwt.service';
 import { EventEmitter } from 'events';
 import { Language } from '../schemas/user.schema';
 
@@ -33,6 +34,7 @@ interface ConversationItem {
   content: string;
 }
 
+@UseGuards(JwtWebSocketGuard)
 @WebSocketGateway({
   cors: { origin: true },
   namespace: '/realtime-practice',
@@ -47,15 +49,89 @@ export class RealtimePracticeGateway
   private readonly sessionToSocketMap = new Map<string, Socket>();
   private readonly socketToSessionMap = new Map<string, string>();
 
-  constructor(private readonly realtimeService: OpenAIRealtimeService) {}
+  constructor(
+    private readonly realtimeService: OpenAIRealtimeService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   afterInit(): void {
     this.logger.log('RealtimePracticeGateway initialized');
   }
 
-  handleConnection(client: Socket): void {
-    this.logger.log(`Client connected: ${client.id}`);
-    client.emit('connected', { clientId: client.id, timestamp: Date.now() });
+  async handleConnection(client: Socket): Promise<void> {
+    try {
+      // Validar token en la conexión
+      const token = this.extractTokenFromHandshake(client);
+      if (!token) {
+        this.logger.warn(`Client ${client.id} attempted connection without token`);
+        client.emit('error', {
+          type: 'authentication-error',
+          message: 'Token no proporcionado',
+          timestamp: Date.now(),
+        });
+        client.disconnect();
+        return;
+      }
+
+      // Verificar token
+      try {
+        const payload = await this.jwtService.verifyToken(token);
+        if (!payload) {
+          throw new Error('Token inválido');
+        }
+
+        // Almacenar usuario en el socket
+        client.data.user = payload;
+        // El token JWT usa 'sub' para el userId (ver auth.service.ts generateToken)
+        client.data.userId = payload.sub || payload.id || payload.userId;
+
+        this.logger.log(`Client connected: ${client.id} (User: ${client.data.userId})`);
+        client.emit('connected', { 
+          clientId: client.id, 
+          userId: client.data.userId,
+          timestamp: Date.now() 
+        });
+      } catch (error) {
+        this.logger.warn(`Client ${client.id} provided invalid token`);
+        client.emit('error', {
+          type: 'authentication-error',
+          message: 'Token inválido',
+          timestamp: Date.now(),
+        });
+        client.disconnect();
+      }
+    } catch (error) {
+      this.logger.error(`Error in handleConnection: ${error}`);
+      client.disconnect();
+    }
+  }
+
+  /**
+   * Extrae el token del handshake de Socket.IO
+   */
+  private extractTokenFromHandshake(client: Socket): string | undefined {
+    // 1. Del query parameter
+    if (client.handshake?.query?.token) {
+      return Array.isArray(client.handshake.query.token)
+        ? client.handshake.query.token[0]
+        : client.handshake.query.token;
+    }
+
+    // 2. Del auth object
+    if (client.handshake?.auth?.token) {
+      return client.handshake.auth.token;
+    }
+
+    // 3. Del header Authorization
+    if (client.handshake?.headers?.authorization) {
+      const authHeader = client.handshake.headers.authorization;
+      const [type, token] = authHeader.split(' ');
+      if (type === 'Bearer') {
+        return token;
+      }
+    }
+
+    return undefined;
   }
 
   handleDisconnect(client: Socket): void {
@@ -76,15 +152,38 @@ export class RealtimePracticeGateway
     @MessageBody() payload: StartPracticePayload,
   ): Promise<{ status: 'started' | 'error'; sessionId: string; message?: string }> {
     try {
+      // Obtener userId del token autenticado (más seguro que del payload)
+      const authenticatedUserId = client.data.userId || client.data.user?.sub || client.data.user?.id;
+      if (!authenticatedUserId) {
+        throw new Error('Usuario no autenticado');
+      }
+
+      // Convertir ambos a string para comparación flexible
+      const tokenUserId = String(authenticatedUserId);
+      const payloadUserId = payload.userId ? String(payload.userId) : null;
+
+      // Si el payload incluye userId, validar que coincida con el token
+      // Si no lo incluye, usar el del token directamente
+      const finalUserId = payloadUserId && payloadUserId === tokenUserId 
+        ? payloadUserId 
+        : tokenUserId;
+
+      // Log de advertencia si hay discrepancia (pero no fallar)
+      if (payloadUserId && payloadUserId !== tokenUserId) {
+        this.logger.warn(
+          `UserId mismatch: token=${tokenUserId}, payload=${payloadUserId}. Using token userId.`,
+        );
+      }
+
       const mode = payload.mode || 'practice'; // Por defecto es práctica libre
       this.logger.log(
-        `Starting ${mode} session ${payload.sessionId} for user ${payload.userId}`,
+        `Starting ${mode} session ${payload.sessionId} for user ${finalUserId}`,
       );
 
       // Crear sesión de OpenAI Realtime con configuración según el modo
       const session = await this.realtimeService.createSession({
         sessionId: payload.sessionId,
-        userId: payload.userId,
+        userId: finalUserId,
         language: payload.language,
         level: payload.level,
         mode, // Pasar el modo a la sesión

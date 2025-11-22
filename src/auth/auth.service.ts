@@ -296,14 +296,11 @@ export class AuthService {
     if (existingUser) {
       // Migrar usuario legacy si es necesario
       this.migrateLegacyUser(existingUser, provider, userData);
-      console.log('migrateLegacyUser OK');
 
       // Verificar si puede autenticarse con este proveedor
       if (this.canAuthenticateWithProvider(existingUser, provider, userData.providerId)) {
-        console.log('canAuthenticateWithProvider OK', existingUser);
         // LOGIN: Usuario existe con ese email y proveedor
         this.updateUserProviderData(existingUser, provider, userData);
-        console.log('updateUserProviderData OK', existingUser);
         await existingUser.save();
         return this.login(existingUser);
       } else {

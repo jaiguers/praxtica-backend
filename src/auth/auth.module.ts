@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtService } from './jwt.service';
 import { JwtAuthGuard } from './jwt.guard';
+import { JwtWebSocketGuard } from './jwt-websocket.guard';
 import { User, UserSchema } from './user.model';
 import { UserService } from './services/user.service';
 import { UsersService } from './services/users.service';
@@ -32,9 +33,10 @@ import { UsersController } from './controllers/users.controller';
     AuthService,
     JwtService,
     JwtAuthGuard,
+    JwtWebSocketGuard,
     UserService,
     UsersService,
   ],
-  exports: [AuthService, JwtService, JwtAuthGuard, JwtModule, MongooseModule, UserService, UsersService],
+  exports: [AuthService, JwtService, JwtAuthGuard, JwtWebSocketGuard, JwtModule, MongooseModule, UserService, UsersService],
 })
 export class AuthModule {} 
