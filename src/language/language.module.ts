@@ -4,6 +4,7 @@ import { OpenAIModule } from '../openai/openai.module';
 import { User, UserSchema } from '../auth/user.model';
 import { LanguageController } from './language.controller';
 import { LanguageGateway } from './language.gateway';
+import { RealtimePracticeGateway } from './realtime-practice.gateway';
 import { LanguageService } from './language.service';
 import { LanguageAnalyticsService } from './language-analytics.service';
 
@@ -13,7 +14,12 @@ import { LanguageAnalyticsService } from './language-analytics.service';
     OpenAIModule,
   ],
   controllers: [LanguageController],
-  providers: [LanguageService, LanguageGateway, LanguageAnalyticsService],
+  providers: [
+    LanguageService,
+    LanguageGateway,
+    RealtimePracticeGateway,
+    LanguageAnalyticsService,
+  ],
   exports: [LanguageService],
 })
 export class LanguageModule {}
