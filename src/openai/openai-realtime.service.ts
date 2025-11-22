@@ -23,7 +23,7 @@ export type RealtimeEventType =
   | 'input_audio_buffer.discarded'
   | 'conversation.item.input_audio_transcription.completed'
   | 'conversation.item.input_audio_transcription.failed'
-  | 'conversation.item.input_audio_transcription.completed'
+  | 'response.created'
   | 'response.audio_transcript.delta'
   | 'response.audio_transcript.done'
   | 'response.audio.delta'
@@ -323,6 +323,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
+        this.logger.log(
+          `User transcription completed in session ${session.id}`,
+        );
         eventEmitter.emit('user.transcription.completed', event);
         break;
 
@@ -335,6 +338,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'response.audio.delta':
+        this.logger.debug(
+          `Processing response.audio.delta in session ${session.id}, hasDelta: ${!!(event as any).delta}, deltaLength: ${(event as any).delta?.length || 0}`,
+        );
         eventEmitter.emit('assistant.audio.delta', event);
         break;
 
@@ -342,7 +348,17 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         eventEmitter.emit('assistant.audio.done', event);
         break;
 
+      case 'response.created':
+        this.logger.log(
+          `Assistant response created in session ${session.id}`,
+        );
+        eventEmitter.emit('assistant.response.created', event);
+        break;
+
       case 'response.done':
+        this.logger.log(
+          `Assistant response done in session ${session.id}`,
+        );
         eventEmitter.emit('assistant.response.done', event);
         break;
 
@@ -387,7 +403,16 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
       throw new Error('Unsupported audio data type');
     }
 
+    if (audioBuffer.length === 0) {
+      this.logger.warn(`Empty audio buffer for session ${sessionId}`);
+      return;
+    }
+
     const base64Audio = audioBuffer.toString('base64');
+    
+    this.logger.debug(
+      `Sending audio to OpenAI Realtime: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${base64Audio.length}`,
+    );
 
     this.sendEvent(sessionId, {
       type: 'input_audio_buffer.append',
@@ -423,6 +448,17 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         `Cannot send event to session ${sessionId}: not connected`,
       );
       return;
+    }
+
+    // Log del evento (sin el audio completo para no saturar los logs)
+    if (event.type === 'input_audio_buffer.append') {
+      this.logger.debug(
+        `Sending event to OpenAI: type=${event.type}, session=${sessionId}, audioSize=${(event.audio as string)?.length || 0} chars`,
+      );
+    } else {
+      this.logger.debug(
+        `Sending event to OpenAI: type=${event.type}, session=${sessionId}`,
+      );
     }
 
     try {

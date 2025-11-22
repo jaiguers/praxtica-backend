@@ -256,12 +256,35 @@ export class RealtimePracticeGateway
 
     // Respuesta de audio del asistente (chunks)
     eventEmitter.on('assistant.audio.delta', (event: any) => {
-      if (event.delta) {
+      this.logger.debug(
+        `Received assistant.audio.delta for session ${sessionId}`,
+      );
+      this.logger.debug(
+        `Event structure: ${JSON.stringify(Object.keys(event))}, hasDelta: ${!!event.delta}, deltaType: ${typeof event.delta}`,
+      );
+      
+      // El evento de OpenAI puede tener el audio en event.delta o directamente en el evento
+      const audioData = event.delta || event.audio || event;
+      
+      if (audioData && typeof audioData === 'string' && audioData.length > 0) {
+        this.logger.log(
+          `Emitting assistant-audio-chunk to client for session ${sessionId}, audioSize: ${audioData.length} chars`,
+        );
         client.emit('assistant-audio-chunk', {
           sessionId,
-          audio: event.delta, // Base64 encoded audio
+          audio: audioData, // Base64 encoded audio
           timestamp: Date.now(),
         });
+      } else {
+        this.logger.warn(
+          `assistant.audio.delta event received but no valid audio data for session ${sessionId}. Event keys: ${Object.keys(event).join(', ')}`,
+        );
+        // Log del evento completo para debugging (sin el audio completo si es muy largo)
+        const eventForLog = { ...event };
+        if (eventForLog.delta && typeof eventForLog.delta === 'string' && eventForLog.delta.length > 100) {
+          eventForLog.delta = `[${eventForLog.delta.length} chars]`;
+        }
+        this.logger.debug(`Full event structure: ${JSON.stringify(eventForLog)}`);
       }
     });
 
@@ -323,11 +346,39 @@ export class RealtimePracticeGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: AudioChunkPayload,
   ): void {
+    this.logger.log(
+      `🎤 Audio chunk received from client ${client.id}, sessionId: ${payload?.sessionId}, audioLength: ${payload?.audio?.length || 0}`,
+    );
+
     try {
+      // Validar payload
+      if (!payload) {
+        this.logger.error('Audio chunk payload is null or undefined');
+        client.emit('error', {
+          type: 'invalid-payload',
+          message: 'Payload is required',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
       const sessionId = payload.sessionId;
+      if (!sessionId) {
+        this.logger.error('SessionId is missing in audio chunk payload');
+        client.emit('error', {
+          type: 'missing-session-id',
+          message: 'SessionId is required',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
       const session = this.realtimeService.getSession(sessionId);
 
       if (!session || session.status !== 'connected') {
+        this.logger.warn(
+          `Audio chunk received but session ${sessionId} not connected. Session exists: ${!!session}, Status: ${session?.status || 'N/A'}`,
+        );
         client.emit('error', {
           type: 'session-not-connected',
           message: 'Session not connected',
@@ -337,24 +388,47 @@ export class RealtimePracticeGateway
         return;
       }
 
-      // Decodificar audio base64 y enviar a OpenAI Realtime
-      const audioBuffer = Buffer.from(payload.audio, 'base64');
-      this.realtimeService.sendAudio(sessionId, audioBuffer);
+      // Validar que el audio no esté vacío
+      if (!payload.audio || payload.audio.length === 0) {
+        this.logger.warn(`Empty audio chunk received for session ${sessionId}`);
+        return;
+      }
 
-      // Confirmar recepción (opcional)
-      client.emit('audio-chunk-received', {
-        sessionId,
-        timestamp: Date.now(),
-      });
+      // Decodificar audio base64 y enviar a OpenAI Realtime
+      try {
+        const audioBuffer = Buffer.from(payload.audio, 'base64');
+        this.logger.log(
+          `✅ Sending audio chunk to OpenAI: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${payload.audio.length} chars`,
+        );
+        
+        this.realtimeService.sendAudio(sessionId, audioBuffer);
+
+        // Confirmar recepción
+        client.emit('audio-chunk-received', {
+          sessionId,
+          timestamp: Date.now(),
+        });
+      } catch (audioError) {
+        this.logger.error(
+          `Error processing audio buffer for session ${sessionId}:`,
+          audioError,
+        );
+        client.emit('error', {
+          type: 'audio-processing-error',
+          message: (audioError as Error).message,
+          sessionId,
+          timestamp: Date.now(),
+        });
+      }
     } catch (error) {
       this.logger.error(
-        `Error handling audio chunk in session ${payload.sessionId}:`,
+        `❌ Error handling audio chunk from client ${client.id}:`,
         error,
       );
       client.emit('error', {
         type: 'audio-chunk-error',
         message: (error as Error).message,
-        sessionId: payload.sessionId,
+        sessionId: payload?.sessionId || 'unknown',
         timestamp: Date.now(),
       });
     }
