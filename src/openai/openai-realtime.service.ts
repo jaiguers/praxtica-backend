@@ -191,6 +191,9 @@ export class OpenAIRealtimeService {
       session.config.voice ||
       this.defaultVoiceByLanguage[session.config.language];
 
+    // Log the session configuration for debugging
+    this.logger.log(`🔧 Configuring session ${session.id} with mode: ${session.config.mode}, language: ${session.config.language}`);
+
     // Determinar el prompt del sistema según el modo
     let systemPrompt: string;
     if (session.config.mode === 'test') {
@@ -239,6 +242,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
       }
     }
 
+    // Log the final system prompt for debugging
+    this.logger.log(`📝 System prompt for session ${session.id} (mode: ${session.config.mode}): ${systemPrompt.substring(0, 200)}...`);
+
     // Enviar configuración inicial
     this.sendEvent(session.id, {
       type: 'session.update',
@@ -248,6 +254,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         voice: voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
+        input_audio_transcription: {
+          model: 'whisper-1',
+        },
         temperature: session.config.temperature ?? (session.config.mode === 'test' ? 0.7 : 0.8),
         turn_detection: {
           type: 'server_vad',
@@ -300,10 +309,6 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
     event: RealtimeEvent,
     eventEmitter: EventEmitter,
   ): void {
-    this.logger.debug(
-      `Received event ${event.type} in session ${session.id}`,
-    );
-
     switch (event.type) {
       case 'session.created':
       case 'session.updated':
@@ -338,9 +343,6 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'response.audio.delta':
-        this.logger.debug(
-          `Processing response.audio.delta in session ${session.id}, hasDelta: ${!!(event as any).delta}, deltaLength: ${(event as any).delta?.length || 0}`,
-        );
         eventEmitter.emit('assistant.audio.delta', event);
         break;
 
@@ -371,9 +373,8 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       default:
-        this.logger.debug(
-          `Unhandled event type: ${event.type} in session ${session.id}`,
-        );
+        // Silently ignore unhandled events
+        break;
     }
   }
 
@@ -404,15 +405,10 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
     }
 
     if (audioBuffer.length === 0) {
-      this.logger.warn(`Empty audio buffer for session ${sessionId}`);
       return;
     }
 
     const base64Audio = audioBuffer.toString('base64');
-    
-    this.logger.debug(
-      `Sending audio to OpenAI Realtime: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${base64Audio.length}`,
-    );
 
     this.sendEvent(sessionId, {
       type: 'input_audio_buffer.append',
@@ -444,28 +440,11 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
   private sendEvent(sessionId: string, event: Record<string, unknown>): void {
     const session = this.sessions.get(sessionId);
     if (!session || !session.ws || session.status !== 'connected') {
-      this.logger.warn(
-        `Cannot send event to session ${sessionId}: not connected`,
-      );
       return;
-    }
-
-    // Log del evento (sin el audio completo para no saturar los logs)
-    if (event.type === 'input_audio_buffer.append') {
-      this.logger.debug(
-        `Sending event to OpenAI: type=${event.type}, session=${sessionId}, audioSize=${(event.audio as string)?.length || 0} chars`,
-      );
-    } else {
-      this.logger.debug(
-        `Sending event to OpenAI: type=${event.type}, session=${sessionId}`,
-      );
     }
 
     try {
       session.ws.send(JSON.stringify(event));
-      this.logger.debug(
-        `Sent event ${event.type} to session ${sessionId}`,
-      );
     } catch (error) {
       this.logger.error(
         `Error sending event to session ${sessionId}:`,

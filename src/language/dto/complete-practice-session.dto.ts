@@ -200,8 +200,9 @@ export class CompletePracticeSessionDto {
   @IsEnum(LANGUAGES)
   language: Language;
 
+  @IsOptional()
   @IsEnum(CEFR_LEVELS)
-  level: CefrLevel;
+  level?: CefrLevel;
 
   @IsDateString()
   endedAt: string;
@@ -211,9 +212,10 @@ export class CompletePracticeSessionDto {
   @Min(0)
   durationSeconds?: number;
 
+  @IsOptional()
   @ValidateNested()
   @Type(() => PracticeFeedbackDto)
-  feedback: PracticeFeedbackDto;
+  feedback?: PracticeFeedbackDto;
 
   @IsOptional()
   @ValidateNested()

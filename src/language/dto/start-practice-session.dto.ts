@@ -16,6 +16,10 @@ import {
 } from '../../schemas/user.schema';
 
 export class StartPracticeSessionDto {
+  @IsOptional()
+  @IsString()
+  sessionId?: string;
+
   @IsEnum(LANGUAGES)
   language: Language;
 

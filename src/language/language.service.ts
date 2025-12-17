@@ -29,6 +29,8 @@ import {
   ConversationItem,
   OpenAIRealtimeService,
 } from '../openai/openai-realtime.service';
+import { RedisStorageService } from './redis-storage.service';
+import { CefrAnalysisService } from './cefr-analysis.service';
 
 export type RealtimeEvent =
   | {
@@ -87,6 +89,8 @@ export class LanguageService {
     private readonly userModel: Model<UserDocument>,
     private readonly analyticsService: LanguageAnalyticsService,
     private readonly realtimeService: OpenAIRealtimeService,
+    private readonly redisStorage: RedisStorageService,
+    private readonly cefrAnalysis: CefrAnalysisService,
   ) {}
 
   registerGateway(gateway: LanguageGateway): void {
@@ -370,19 +374,59 @@ export class LanguageService {
   ): Promise<PracticeSession> {
     const user = await this.ensureUser(userId);
 
-    const session = (user.practiceSessions ?? []).find((item: any) =>
+    // Initialize practiceSessions if it doesn't exist
+    user.practiceSessions ??= [];
+
+    let session = (user.practiceSessions ?? []).find((item: any) =>
       this.isSameObjectId(item._id, sessionId),
     );
 
+    // If session doesn't exist, create it (for cases where frontend creates sessionId)
     if (!session) {
-      throw new NotFoundException('Sesión de práctica no encontrada');
+      this.logger.log(`Session ${sessionId} not found, creating new session for completion`);
+      
+      const feedback = this.analyticsService.createInitialFeedback(dto.language, dto.level || 'A1');
+      
+      session = {
+        _id: sessionId as any,
+        startedAt: new Date(Date.now() - (dto.durationSeconds || 0) * 1000), // Estimate start time
+        language: dto.language,
+        level: dto.level || 'A1',
+        durationSeconds: 0,
+        topics: [],
+        pronunciation: feedback.pronunciation,
+        grammar: feedback.grammar,
+        vocabulary: feedback.vocabulary,
+        fluency: feedback.fluency,
+        completed: false,
+        conversationLog: {
+          transcript: [],
+          audioUrls: [],
+        },
+      } as any;
+
+      user.practiceSessions.push(session as any);
+      user.markModified('practiceSessions');
     }
 
-    const analytics = this.analyticsService.analyzeCompletion(dto);
-    this.applyPracticeFeedback(session, dto, analytics.feedback);
+    // Retrieve conversation from Redis
+    const messages = await this.redisStorage.getSessionMessages(sessionId);
+    this.logger.log(`Retrieved ${messages.length} messages from Redis for session ${sessionId}`);
 
-    session.language = dto.language;
-    session.level = dto.level;
+    // Log message breakdown for debugging
+    const userMessages = messages.filter(msg => msg.role === 'user');
+    const assistantMessages = messages.filter(msg => msg.role === 'assistant');
+    this.logger.log(`📊 Message breakdown: ${userMessages.length} user messages, ${assistantMessages.length} assistant messages`);
+
+    // Log first few messages for debugging
+    messages.slice(0, 3).forEach((msg, index) => {
+      this.logger.log(`📝 Message ${index + 1}: [${msg.role}] "${msg.text.substring(0, 50)}..." (length: ${msg.text.length})`);
+    });
+
+    // Determine if this is a CEFR test based on sessionId
+    const isCefrTest = sessionId.includes('cefr-test');
+    this.logger.log(`Completing session: ${sessionId}, isCefrTest: ${isCefrTest}, messagesCount: ${messages.length}`);
+
     session.endedAt = new Date(dto.endedAt);
     session.durationSeconds =
       dto.durationSeconds ??
@@ -392,17 +436,113 @@ export class LanguageService {
           (session.endedAt.getTime() - session.startedAt.getTime()) / 1000,
         ),
       );
-    session.completed = true;
 
-    if (analytics.conversationLog) {
-      session.conversationLog = analytics.conversationLog as any;
+    let cefrAnalysisResult;
+    let analytics: PracticeAnalyticsResult;
+    
+    if (isCefrTest && messages.length > 0) {
+      this.logger.log(`CEFR test validation passed. Language: ${dto.language}, Level: ${session.level}`);
+      
+      // Perform CEFR analysis using OpenAI
+      this.logger.log(`Starting CEFR analysis for test ${sessionId}`);
+      
+      // Extract user audio chunks for analysis
+      const userAudioChunks = messages
+        .filter(msg => msg.role === 'user' && msg.audioBase64)
+        .map(msg => msg.audioBase64)
+        .filter(audio => audio && audio.length > 0);
+      
+      this.logger.log(`📊 Extracted ${userAudioChunks.length} user audio chunks for analysis (total size: ${userAudioChunks.join('').length} base64 chars)`);
+
+      try {
+        cefrAnalysisResult = await this.cefrAnalysis.analyzeCefrLevel(
+          dto.language,
+          messages,
+          session.durationSeconds,
+        );
+
+        // Update session with CEFR analysis results
+        session.level = cefrAnalysisResult.level;
+        session.pronunciation = cefrAnalysisResult.feedback.pronunciation as any;
+        session.grammar = cefrAnalysisResult.feedback.grammar as any;
+        session.vocabulary = cefrAnalysisResult.feedback.vocabulary as any;
+        session.fluency = cefrAnalysisResult.feedback.fluency as any;
+
+        this.logger.log(`CEFR analysis completed. Level determined: ${cefrAnalysisResult.level}`);
+      } catch (error) {
+        this.logger.error('Error during CEFR analysis:', error);
+        // Keep original session data if analysis fails
+      }
+    } else {
+      // For regular practice sessions, use the existing analytics
+      analytics = this.analyticsService.analyzeCompletion(dto);
+      this.applyPracticeFeedback(session, dto, analytics.feedback);
+      session.level = dto.level || session.level;
     }
 
+    // Create analytics for completion event (use default if CEFR test)
+    if (!analytics) {
+      // For CEFR tests, create a DTO with the determined level and feedback from analysis
+      const dtoWithLevel: CompletePracticeSessionDto = {
+        ...dto,
+        level: session.level, // Use the level determined by CEFR analysis
+        feedback: cefrAnalysisResult ? {
+          pronunciation: {
+            score: cefrAnalysisResult.feedback.pronunciation.score,
+            mispronouncedWords: cefrAnalysisResult.feedback.pronunciation.mispronouncedWords.map(w => ({
+              ...w,
+              lastHeard: w.lastHeard.toISOString(),
+            })),
+          },
+          grammar: {
+            score: cefrAnalysisResult.feedback.grammar.score,
+            errors: cefrAnalysisResult.feedback.grammar.errors,
+          },
+          vocabulary: {
+            score: cefrAnalysisResult.feedback.vocabulary.score,
+            rareWordsUsed: cefrAnalysisResult.feedback.vocabulary.rareWordsUsed,
+            repeatedWords: cefrAnalysisResult.feedback.vocabulary.repeatedWords,
+            suggestedWords: cefrAnalysisResult.feedback.vocabulary.suggestedWords,
+          },
+          fluency: {
+            score: cefrAnalysisResult.feedback.fluency.score,
+            wordsPerMinute: cefrAnalysisResult.feedback.fluency.wordsPerMinute,
+            nativeRange: cefrAnalysisResult.feedback.fluency.nativeRange,
+            pausesPerMinute: cefrAnalysisResult.feedback.fluency.pausesPerMinute,
+          },
+        } : undefined,
+      };
+      analytics = this.analyticsService.analyzeCompletion(dtoWithLevel);
+    }
+
+    session.language = dto.language;
+    session.completed = true;
+
+    // Save conversation history
+    this.logger.log(`💾 Saving conversation history with ${messages.length} messages`);
+    
+    // Filter out empty messages for cleaner storage
+    const validMessages = messages.filter(msg => msg.text && msg.text.trim().length > 0);
+    this.logger.log(`💾 Filtered conversation has ${validMessages.length} valid messages`);
+
+    if (validMessages.length > 0) {
+      session.conversationLog = {
+        transcript: validMessages.map(msg => ({
+          role: msg.role,
+          text: msg.text,
+          timestamp: msg.timestamp,
+        })),
+        audioUrls: [], // Audio URLs would be generated separately if needed
+      } as any;
+    }
+
+    // Update user's current level
+    const finalLevel = cefrAnalysisResult?.level || session.level;
     this.upsertCurrentLevel(
       user,
       dto.language,
-      analytics.metrics.recommendedLevel,
-      'practice',
+      finalLevel,
+      isCefrTest ? 'test' : 'practice',
     );
 
     user.markModified('practiceSessions');
@@ -418,6 +558,15 @@ export class LanguageService {
     this.emitRealtimeEvent(sessionId, completionEvent);
     this.completeRealtimeStream(sessionId);
     this.conversationStates.delete(sessionId);
+
+    // Clean up Redis session
+    try {
+      await this.redisStorage.deleteSession(sessionId);
+      this.logger.log(`Redis cleanup completed for ${isCefrTest ? 'CEFR test' : 'practice session'} ${sessionId}`);
+    } catch (error) {
+      this.logger.error(`Failed to clean up Redis session ${sessionId}:`, error);
+    }
+
     return session;
   }
 
@@ -547,6 +696,37 @@ export class LanguageService {
     const current =
       value instanceof Types.ObjectId ? value.toHexString() : String(value);
     return current === comparison;
+  }
+
+  /**
+   * Initialize Redis session for conversation storage
+   */
+  async initializeRedisSession(sessionId: string): Promise<void> {
+    await this.redisStorage.initializeSession(sessionId);
+  }
+
+  /**
+   * Store user transcription in Redis
+   */
+  async storeUserTranscription(
+    sessionId: string,
+    text: string,
+    audioBase64: string,
+    timestamp: number,
+  ): Promise<void> {
+    await this.redisStorage.storeUserTranscription(sessionId, text, audioBase64, timestamp);
+  }
+
+  /**
+   * Store assistant response in Redis
+   */
+  async storeAssistantResponse(
+    sessionId: string,
+    text: string,
+    audioBase64: string,
+    timestamp: number,
+  ): Promise<void> {
+    await this.redisStorage.storeAssistantResponse(sessionId, text, audioBase64, timestamp);
   }
 }
 

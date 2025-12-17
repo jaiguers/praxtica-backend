@@ -7,6 +7,8 @@ import { LanguageGateway } from './language.gateway';
 import { RealtimePracticeGateway } from './realtime-practice.gateway';
 import { LanguageService } from './language.service';
 import { LanguageAnalyticsService } from './language-analytics.service';
+import { RedisStorageService } from './redis-storage.service';
+import { CefrAnalysisService } from './cefr-analysis.service';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { LanguageAnalyticsService } from './language-analytics.service';
     LanguageGateway,
     RealtimePracticeGateway,
     LanguageAnalyticsService,
+    RedisStorageService,
+    CefrAnalysisService,
   ],
   exports: [LanguageService],
 })
