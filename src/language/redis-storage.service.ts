@@ -74,12 +74,9 @@ export class RedisStorageService {
 
     const key = this.getUserAudioKey(sessionId);
     
-    this.logger.log(`🔑 Using Redis key: ${key} for session ${sessionId}`);
-    
     const result = await this.redis.lpush(key, JSON.stringify(audioSegment));
     await this.redis.expire(key, this.sessionTTL);
     
-    this.logger.log(`🎤 Stored USER audio segment in Redis: ${audioBase64.length} chars (session: ${sessionId}), list length now: ${result}`);
   }
 
   /**
@@ -101,8 +98,6 @@ export class RedisStorageService {
     const key = this.getSessionKey(sessionId);
     await this.redis.lpush(key, JSON.stringify(message));
     await this.redis.expire(key, this.sessionTTL);
-    
-    this.logger.log(`👤 Stored USER message in Redis: "${text}" (session: ${sessionId})`);
   }
 
   /**
@@ -125,7 +120,7 @@ export class RedisStorageService {
     await this.redis.lpush(key, JSON.stringify(message));
     await this.redis.expire(key, this.sessionTTL);
     
-    this.logger.log(`🤖 Stored ASSISTANT message in Redis: "${text.substring(0, 50)}..." (session: ${sessionId})`);
+    this.logger.log(`🤖 Assistant: "${text.substring(0, 50)}..."`);
   }
 
   /**
@@ -147,7 +142,7 @@ export class RedisStorageService {
       .filter(msg => msg !== null)
       .reverse(); // Reverse to get chronological order
 
-    this.logger.log(`Retrieved ${parsedMessages.length} messages for session ${sessionId}`);
+    this.logger.debug(`Retrieved ${parsedMessages.length} messages for session ${sessionId}`);
     return parsedMessages;
   }
 
@@ -170,7 +165,7 @@ export class RedisStorageService {
       .filter(segment => segment !== null)
       .reverse(); // Reverse to get chronological order
 
-    this.logger.log(`Retrieved ${parsedSegments.length} audio segments for session ${sessionId}`);
+    this.logger.debug(`Retrieved ${parsedSegments.length} audio segments for session ${sessionId}`);
     return parsedSegments;
   }
 

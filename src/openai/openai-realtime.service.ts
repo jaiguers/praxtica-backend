@@ -192,14 +192,7 @@ export class OpenAIRealtimeService {
       this.defaultVoiceByLanguage[session.config.language];
 
     // Log the session configuration for debugging
-    this.logger.log(`🔧 Configuring session ${session.id} with mode: ${session.config.mode}, language: ${session.config.language}`);
-
-    // Additional debug logging for CEFR test detection
-    if (session.config.mode === 'test') {
-      this.logger.log(`✅ CEFR TEST MODE DETECTED - Will use formal assessment greeting`);
-    } else {
-      this.logger.log(`📚 PRACTICE MODE - Will use casual practice greeting`);
-    }
+    this.logger.log(`🔧 Configuring session ${session.id}: ${session.config.mode} mode, ${session.config.language}`);
 
     // Determinar el prompt del sistema según el modo
     let systemPrompt: string;
@@ -264,7 +257,7 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
     }
 
     // Log the final system prompt for debugging
-    this.logger.log(`📝 System prompt for session ${session.id} (mode: ${session.config.mode}): ${systemPrompt.substring(0, 200)}...`);
+    this.logger.debug(`📝 System prompt configured for ${session.config.mode} mode`);
 
     // Enviar configuración inicial
     this.sendEvent(session.id, {
@@ -312,7 +305,7 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
   private createInitialResponse(session: RealtimeSession): void {
     // Crear una respuesta inicial vacía que activará el saludo del asistente
     // El prompt del sistema ya tiene las instrucciones para saludar primero
-    this.logger.log(`Creating initial response for session ${session.id}`);
+    this.logger.debug(`Creating initial response for session ${session.id}`);
 
     this.sendEvent(session.id, {
       type: 'response.create',
@@ -352,16 +345,11 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         if (event.transcript) {
           console.log(`User transcription: ${event.transcript}`);
         }
-        this.logger.log(
-          `User transcription completed in session ${session.id}`,
-        );
+        
         eventEmitter.emit('user.transcription.completed', event);
         break;
 
       case 'response.audio_transcript.delta':
-        this.logger.log(
-          `response.audio_transcript.delta in session ${session.id}`,
-        );
         eventEmitter.emit('assistant.transcript.delta', event);
         break;
 
@@ -378,16 +366,10 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'response.created':
-        this.logger.log(
-          `Assistant response created in session ${session.id}`,
-        );
         eventEmitter.emit('assistant.response.created', event);
         break;
 
       case 'response.done':
-        this.logger.log(
-          `Assistant response done in session ${session.id}`,
-        );
         eventEmitter.emit('assistant.response.done', event);
         break;
 
@@ -444,16 +426,10 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
 
     const base64Audio = audioBuffer.toString('base64');
 
-    this.logger.debug(`📊 User audio accumulated: session=${sessionId}, totalChunks=?, latestChunkSize=${base64Audio.length}`);
-    this.logger.debug(`Sending audio to OpenAI Realtime: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${base64Audio.length}`);
-    this.logger.debug(`Sending event to OpenAI: type=input_audio_buffer.append, session=${sessionId}, audioSize=${base64Audio.length} chars`);
-
     this.sendEvent(sessionId, {
       type: 'input_audio_buffer.append',
       audio: base64Audio,
     });
-
-    this.logger.debug(`Sent event input_audio_buffer.append to session ${sessionId}`);
   }
 
   /**

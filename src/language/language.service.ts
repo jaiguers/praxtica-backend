@@ -413,16 +413,6 @@ export class LanguageService {
 
     // Retrieve conversation from Redis
     const messages = await this.redisStorage.getSessionMessages(sessionId);
-    this.logger.log(`Retrieved ${messages.length} messages from Redis for session ${sessionId}`);
-
-    // User transcriptions are now stored directly in messages from OpenAI Realtime API
-    // No need to process audio separately - transcriptions come from conversation.item.input_audio_transcription.completed
-    this.logger.log(`📝 Using transcriptions from OpenAI Realtime API (stored in messages)`);
-
-    // Log message breakdown for debugging
-    const userMessages = messages.filter(msg => msg.role === 'user');
-    const assistantMessages = messages.filter(msg => msg.role === 'assistant');
-    this.logger.log(`📊 Message breakdown: ${userMessages.length} user messages, ${assistantMessages.length} assistant messages`);
 
     // Log first few messages for debugging
     messages.slice(0, 3).forEach((msg, index) => {
@@ -431,7 +421,6 @@ export class LanguageService {
 
     // Determine if this is a CEFR test based on sessionId
     const isCefrTest = sessionId.includes('cefr-test');
-    this.logger.log(`Completing session: ${sessionId}, isCefrTest: ${isCefrTest}, messagesCount: ${messages.length}`);
 
     session.endedAt = new Date(dto.endedAt);
     session.durationSeconds =
@@ -447,10 +436,6 @@ export class LanguageService {
     let analytics: PracticeAnalyticsResult;
     
     if (isCefrTest && messages.length > 0) {
-      this.logger.log(`CEFR test validation passed. Language: ${dto.language}, Level: ${session.level}`);
-      
-      // Perform CEFR analysis using OpenAI
-      this.logger.log(`Starting CEFR analysis for test ${sessionId}`);
       
       // Extract user audio chunks for analysis (now from transcribed messages)
       const userAudioChunks = messages
@@ -522,7 +507,6 @@ export class LanguageService {
     
     // Filter out empty messages for cleaner storage
     const validMessages = messages.filter(msg => msg.text && msg.text.trim().length > 0);
-    this.logger.log(`💾 Filtered conversation has ${validMessages.length} valid messages`);
 
     if (validMessages.length > 0) {
       session.conversationLog = {

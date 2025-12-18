@@ -262,13 +262,11 @@ export class RealtimePracticeGateway
       const currentChunks = this.userAudioChunks.get(sessionId) || [];
       this.speechStartTimes.set(sessionId, currentChunks.length);
       
-      this.logger.log(`🎤 User speech STARTED for session ${sessionId}, marking index: ${currentChunks.length}`);
       client.emit('user-speech-started', { sessionId, timestamp: Date.now() });
     });
 
     // Usuario terminó de hablar - flush buffer and commit audio
     eventEmitter.on('user.speech.stopped', async () => {
-      this.logger.log(`🎤 User speech STOPPED for session ${sessionId}, flushing audio buffer`);
       client.emit('user-speech-stopped', { sessionId, timestamp: Date.now() });
       
       // Flush any remaining backup audio to Redis
@@ -283,13 +281,9 @@ export class RealtimePracticeGateway
     eventEmitter.on('user.transcription.completed', async (event: any) => {
       if (event.transcript) {
         const timestamp = Date.now();
-        
-        this.logger.log(`👤 User transcription completed for session ${sessionId}: "${event.transcript}"`);
-        
         // Store user transcription in Redis (using the existing method)
         try {
           await this.redisStorage.storeUserTranscription(sessionId, event.transcript, '', timestamp);
-          this.logger.log(`💾 Stored user transcription in Redis: "${event.transcript}" for session ${sessionId}`);
         } catch (error) {
           this.logger.error(`Failed to store user transcription in Redis for session ${sessionId}:`, error);
         }
@@ -331,9 +325,6 @@ export class RealtimePracticeGateway
     eventEmitter.on('assistant.transcript.done', async (event: any) => {
       if (event.transcript) {
         const timestamp = Date.now();
-        
-        // Log all assistant messages for debugging
-        this.logger.debug(`🤖 Assistant message in session ${sessionId}: "${event.transcript}"`);
         
         // Check if this is the first message (greeting)
         const isFirstMessage = event.transcript.toLowerCase().includes('hello') || 
@@ -442,16 +433,11 @@ export class RealtimePracticeGateway
       try {
         const audioBuffer = Buffer.from(payload.audio, 'base64');
         
-        // Log audio chunk details
-        this.logger.log(`🎤 Audio chunk received from client ${client.id}, sessionId: ${sessionId}, audioLength: ${payload.audio.length}`);
-        this.logger.log(`✅ Sending audio chunk to OpenAI: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${payload.audio.length} chars`);
-        
         this.realtimeService.sendAudio(sessionId, audioBuffer);
 
         // Accumulate user audio chunks for later analysis
         if (!this.userAudioChunks.has(sessionId)) {
           this.userAudioChunks.set(sessionId, []);
-          this.logger.log(`📦 Initialized audio chunks array for session ${sessionId}`);
         }
         this.userAudioChunks.get(sessionId)!.push(payload.audio);
         
@@ -459,10 +445,10 @@ export class RealtimePracticeGateway
         // We keep this for fallback in case transcriptions fail
         await this.storeAudioChunkForBackup(sessionId, payload.audio);
         
-        // Log every 25 chunks to track accumulation better
+        // Log every 100 chunks to reduce noise
         const totalChunks = this.userAudioChunks.get(sessionId)!.length;
-        if (totalChunks % 25 === 0) {
-          this.logger.log(`📦 Audio chunks accumulated for session ${sessionId}: ${totalChunks} chunks`);
+        if (totalChunks % 100 === 0) {
+          this.logger.debug(`📦 Audio chunks accumulated: ${totalChunks} chunks`);
         }
 
         // Confirmar recepción
@@ -587,7 +573,6 @@ export class RealtimePracticeGateway
       
       try {
         await this.redisStorage.storeUserAudio(sessionId, combinedAudio, timestamp);
-        this.logger.debug(`💾 Stored backup audio in Redis: ${combinedAudio.length} chars for session ${sessionId}`);
         
         // Reset buffer
         this.audioBuffer.set(sessionId, {
@@ -615,7 +600,6 @@ export class RealtimePracticeGateway
     
     try {
       await this.redisStorage.storeUserAudio(sessionId, combinedAudio, timestamp);
-      this.logger.debug(`💾 Flushed remaining backup audio to Redis: ${combinedAudio.length} chars for session ${sessionId}`);
       
       // Clear buffer
       this.audioBuffer.set(sessionId, {

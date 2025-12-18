@@ -31,7 +31,6 @@ export class WhisperTranscriptionService {
 
       // Convert base64 to buffer (PCM16 format from OpenAI Realtime)
       const pcmBuffer = Buffer.from(audioBase64, 'base64');
-      this.logger.log(`📊 PCM buffer size: ${pcmBuffer.length} bytes`);
       
       // Validate PCM buffer size (should be reasonable for audio)
       if (pcmBuffer.length < 1000) {
@@ -40,14 +39,11 @@ export class WhisperTranscriptionService {
       
       // Convert PCM16 to WAV format for Whisper
       const wavBuffer = this.convertPCM16ToWAV(pcmBuffer);
-      this.logger.log(`📊 WAV buffer size: ${wavBuffer.length} bytes`);
       
       // Create a File-like object for the API
       const audioFile = new File([new Uint8Array(wavBuffer)], 'audio.wav', {
         type: 'audio/wav',
       });
-
-      this.logger.log(`📤 Sending to Whisper API: ${audioFile.size} bytes, language: ${language}`);
 
       // Call Whisper API
       const response = await this.openai.audio.transcriptions.create({
