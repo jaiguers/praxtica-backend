@@ -62,7 +62,13 @@ export class CefrAnalysisService {
     this.logger.log(`   Total messages: ${messages.length}`);
     this.logger.log(`   User messages: ${userMessages.length}`);
     this.logger.log(`   Assistant messages: ${messages.filter(m => m.role === 'assistant').length}`);
-    this.logger.log(`   Conversation transcript:\n${conversationText}`);
+    
+    // Log each user message for debugging
+    userMessages.forEach((msg, index) => {
+      this.logger.log(`   👤 User message ${index + 1}: "${msg.text}" (audio: ${msg.audioBase64 ? msg.audioBase64.length + ' chars' : 'none'})`);
+    });
+    
+    this.logger.log(`   📝 Full conversation transcript:\n${conversationText}`);
 
     // Create analysis prompt
     const analysisPrompt = this.createAnalysisPrompt(language, conversationText, wordsPerMinute);

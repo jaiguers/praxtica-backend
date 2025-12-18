@@ -31,6 +31,7 @@ import {
 } from '../openai/openai-realtime.service';
 import { RedisStorageService } from './redis-storage.service';
 import { CefrAnalysisService } from './cefr-analysis.service';
+import { WhisperTranscriptionService } from './whisper-transcription.service';
 
 export type RealtimeEvent =
   | {
@@ -91,6 +92,7 @@ export class LanguageService {
     private readonly realtimeService: OpenAIRealtimeService,
     private readonly redisStorage: RedisStorageService,
     private readonly cefrAnalysis: CefrAnalysisService,
+    private readonly whisperService: WhisperTranscriptionService,
   ) {}
 
   registerGateway(gateway: LanguageGateway): void {
@@ -413,6 +415,10 @@ export class LanguageService {
     const messages = await this.redisStorage.getSessionMessages(sessionId);
     this.logger.log(`Retrieved ${messages.length} messages from Redis for session ${sessionId}`);
 
+    // User transcriptions are now stored directly in messages from OpenAI Realtime API
+    // No need to process audio separately - transcriptions come from conversation.item.input_audio_transcription.completed
+    this.logger.log(`📝 Using transcriptions from OpenAI Realtime API (stored in messages)`);
+
     // Log message breakdown for debugging
     const userMessages = messages.filter(msg => msg.role === 'user');
     const assistantMessages = messages.filter(msg => msg.role === 'assistant');
@@ -446,7 +452,7 @@ export class LanguageService {
       // Perform CEFR analysis using OpenAI
       this.logger.log(`Starting CEFR analysis for test ${sessionId}`);
       
-      // Extract user audio chunks for analysis
+      // Extract user audio chunks for analysis (now from transcribed messages)
       const userAudioChunks = messages
         .filter(msg => msg.role === 'user' && msg.audioBase64)
         .map(msg => msg.audioBase64)
@@ -482,37 +488,30 @@ export class LanguageService {
 
     // Create analytics for completion event (use default if CEFR test)
     if (!analytics) {
-      // For CEFR tests, create a DTO with the determined level and feedback from analysis
-      const dtoWithLevel: CompletePracticeSessionDto = {
-        ...dto,
-        level: session.level, // Use the level determined by CEFR analysis
-        feedback: cefrAnalysisResult ? {
-          pronunciation: {
-            score: cefrAnalysisResult.feedback.pronunciation.score,
-            mispronouncedWords: cefrAnalysisResult.feedback.pronunciation.mispronouncedWords.map(w => ({
-              ...w,
-              lastHeard: w.lastHeard.toISOString(),
-            })),
+      // For CEFR tests, we don't need to call analyzeCompletion since we already have the analysis
+      // Just create a simple analytics result with the metrics
+      if (cefrAnalysisResult) {
+        analytics = {
+          feedback: cefrAnalysisResult.feedback,
+          metrics: {
+            averageScore: (
+              cefrAnalysisResult.feedback.pronunciation.score +
+              cefrAnalysisResult.feedback.grammar.score +
+              cefrAnalysisResult.feedback.vocabulary.score +
+              cefrAnalysisResult.feedback.fluency.score
+            ) / 4,
+            recommendedLevel: cefrAnalysisResult.level,
+            fluencyRatio: cefrAnalysisResult.feedback.fluency.wordsPerMinute / 150, // Normalize WPM to a ratio (150 WPM as baseline)
           },
-          grammar: {
-            score: cefrAnalysisResult.feedback.grammar.score,
-            errors: cefrAnalysisResult.feedback.grammar.errors,
-          },
-          vocabulary: {
-            score: cefrAnalysisResult.feedback.vocabulary.score,
-            rareWordsUsed: cefrAnalysisResult.feedback.vocabulary.rareWordsUsed,
-            repeatedWords: cefrAnalysisResult.feedback.vocabulary.repeatedWords,
-            suggestedWords: cefrAnalysisResult.feedback.vocabulary.suggestedWords,
-          },
-          fluency: {
-            score: cefrAnalysisResult.feedback.fluency.score,
-            wordsPerMinute: cefrAnalysisResult.feedback.fluency.wordsPerMinute,
-            nativeRange: cefrAnalysisResult.feedback.fluency.nativeRange,
-            pausesPerMinute: cefrAnalysisResult.feedback.fluency.pausesPerMinute,
-          },
-        } : undefined,
-      };
-      analytics = this.analyticsService.analyzeCompletion(dtoWithLevel);
+        };
+      } else {
+        // Fallback: create analytics with default feedback
+        const dtoWithLevel: CompletePracticeSessionDto = {
+          ...dto,
+          level: session.level || 'A1',
+        };
+        analytics = this.analyticsService.analyzeCompletion(dtoWithLevel);
+      }
     }
 
     session.language = dto.language;

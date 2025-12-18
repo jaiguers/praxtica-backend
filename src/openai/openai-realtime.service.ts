@@ -141,10 +141,10 @@ export class OpenAIRealtimeService {
       this.logger.log(`WebSocket connected for session ${session.id}`);
       session.status = 'connected';
       eventEmitter.emit('connected');
-      
+
       // Una vez conectado, configurar la sesión
       this.configureSession(session);
-      
+
       // Esperar a que la sesión se actualice para crear el saludo inicial
       const sessionUpdatedHandler = () => {
         setTimeout(() => {
@@ -194,23 +194,44 @@ export class OpenAIRealtimeService {
     // Log the session configuration for debugging
     this.logger.log(`🔧 Configuring session ${session.id} with mode: ${session.config.mode}, language: ${session.config.language}`);
 
+    // Additional debug logging for CEFR test detection
+    if (session.config.mode === 'test') {
+      this.logger.log(`✅ CEFR TEST MODE DETECTED - Will use formal assessment greeting`);
+    } else {
+      this.logger.log(`📚 PRACTICE MODE - Will use casual practice greeting`);
+    }
+
     // Determinar el prompt del sistema según el modo
     let systemPrompt: string;
     if (session.config.mode === 'test') {
       // Modo test CEFR: evaluación formal
       if (session.config.language === 'english') {
-        systemPrompt = `You are Maria, a professional CEFR (Common European Framework of Reference) language assessor conducting a formal English placement test. 
+        systemPrompt = `You are Maria, a professional CEFR (Common European Framework of Reference) language assessor conducting a formal English placement test.
 
-IMPORTANT: When the conversation begins, you must greet the user first. Say: "Hello! Welcome to your placement test. I'm Maria, your assessor. Let's begin with a few questions to determine your English level. Please introduce yourself briefly and tell me a little about your background."
+CRITICAL CONVERSATION RULES - FOLLOW THESE EXACTLY:
+- WAIT AT LEAST 4 SECONDS of complete silence before speaking
+- After asking ANY question, you MUST wait for the user's COMPLETE answer
+- Do NOT interrupt the user while they are speaking
+- Do NOT continue speaking if the user hasn't responded to your question
+- Do NOT ask follow-up questions until the user has fully answered the current question
+- If you hear fragments like "you" or "yeah", WAIT for the complete response - the user is still thinking
+- Only speak when you are certain the user has finished their complete thought
+- If there is prolonged silence (more than 15 seconds after asking a question), you may ask: "Are you still there? Please feel free to respond when you're ready."
+- NEVER respond to partial words, fragments, or incomplete thoughts
+
+MANDATORY OPENING: When the conversation begins, you must greet the user first. Say EXACTLY: "Hello! Welcome to your placement test. I'm Maria, your assessor. Let's begin with a few questions to determine your English level. Please introduce yourself briefly and tell me a little about your background."
+
+Then WAIT for their COMPLETE response before asking the next question.
 
 Your role is to:
 - Start by greeting the user (this is your first message)
-- Ask structured questions that progressively increase in difficulty
+- Ask ONE question at a time and wait for the COMPLETE response
 - Evaluate the user's responses across four dimensions: grammar, pronunciation, vocabulary, and fluency
 - Provide clear, specific questions that help determine the user's CEFR level (A1, A2, B1, B2, C1, C2)
 - Keep the test focused and efficient
-- After each response, provide brief, constructive feedback
-- Do not engage in casual conversation - this is a formal assessment`;
+- After each COMPLETE response, provide brief, constructive feedback
+- Do not engage in casual conversation - this is a formal assessment
+- NEVER respond to partial words or fragments - wait for complete sentences`;
       } else {
         systemPrompt = `Eres Maria, una evaluadora profesional de CEFR (Marco Común Europeo de Referencia) realizando un examen de nivelación formal de español.
 
@@ -257,12 +278,12 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         input_audio_transcription: {
           model: 'whisper-1',
         },
-        temperature: session.config.temperature ?? (session.config.mode === 'test' ? 0.7 : 0.8),
+        temperature: session.config.temperature ?? (session.config.mode === 'test' ? 0.6 : 0.7), // Temperatura muy baja para máximo control
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
+          threshold: 0.6, // Más alto para ser más conservador en detectar voz
+          prefix_padding_ms: 800, // Más tiempo antes de empezar a escuchar
+          silence_duration_ms: 4000, // 4 segundos de silencio antes de que María hable
         },
         tools: [
           {
@@ -292,7 +313,7 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
     // Crear una respuesta inicial vacía que activará el saludo del asistente
     // El prompt del sistema ya tiene las instrucciones para saludar primero
     this.logger.log(`Creating initial response for session ${session.id}`);
-    
+
     this.sendEvent(session.id, {
       type: 'response.create',
       response: {
@@ -328,6 +349,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
+        if (event.transcript) {
+          console.log(`User transcription: ${event.transcript}`);
+        }
         this.logger.log(
           `User transcription completed in session ${session.id}`,
         );
@@ -335,6 +359,9 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'response.audio_transcript.delta':
+        this.logger.log(
+          `response.audio_transcript.delta in session ${session.id}`,
+        );
         eventEmitter.emit('assistant.transcript.delta', event);
         break;
 
@@ -365,6 +392,13 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'error':
+        const errorEvent = event as any;
+        // Silenciar errores de commit vacío ya que los manejamos intencionalmente
+        if (errorEvent.error?.code === 'input_audio_buffer_commit_empty') {
+          // Estos errores son esperados cuando no hay suficiente audio
+          return;
+        }
+
         this.logger.error(
           `OpenAI Realtime error in session ${session.id}:`,
           event,
@@ -410,10 +444,16 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
 
     const base64Audio = audioBuffer.toString('base64');
 
+    this.logger.debug(`📊 User audio accumulated: session=${sessionId}, totalChunks=?, latestChunkSize=${base64Audio.length}`);
+    this.logger.debug(`Sending audio to OpenAI Realtime: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${base64Audio.length}`);
+    this.logger.debug(`Sending event to OpenAI: type=input_audio_buffer.append, session=${sessionId}, audioSize=${base64Audio.length} chars`);
+
     this.sendEvent(sessionId, {
       type: 'input_audio_buffer.append',
       audio: base64Audio,
     });
+
+    this.logger.debug(`Sent event input_audio_buffer.append to session ${sessionId}`);
   }
 
   /**
@@ -556,8 +596,8 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
     [key: string]: unknown;
   }> {
     for await (const event of stream) {
-      const eventObj = event as { type?: string; delta?: string; [key: string]: unknown };
-      
+      const eventObj = event as { type?: string; delta?: string;[key: string]: unknown };
+
       // Mapear eventos del nuevo formato al formato legacy
       if (eventObj.type === 'response.output_text.delta') {
         yield {

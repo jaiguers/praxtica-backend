@@ -9,6 +9,11 @@ export interface StoredMessage {
   timestamp: number;
 }
 
+export interface StoredAudioSegment {
+  audioBase64: string;
+  timestamp: number;
+}
+
 @Injectable()
 export class RedisStorageService {
   private readonly logger = new Logger(RedisStorageService.name);
@@ -46,12 +51,39 @@ export class RedisStorageService {
   async initializeSession(sessionId: string): Promise<void> {
     const key = this.getSessionKey(sessionId);
     await this.redis.del(key); // Clear any existing data
+    // Create an empty list and set TTL
+    await this.redis.lpush(key, JSON.stringify({ init: true, timestamp: Date.now() }));
     await this.redis.expire(key, this.sessionTTL);
+    // Remove the init marker
+    await this.redis.lpop(key);
     this.logger.log(`🔄 Initialized Redis session: ${sessionId}`);
   }
 
   /**
-   * Store a user transcription with audio
+   * Store user audio segment (without transcription)
+   */
+  async storeUserAudio(
+    sessionId: string,
+    audioBase64: string,
+    timestamp: number,
+  ): Promise<void> {
+    const audioSegment: StoredAudioSegment = {
+      audioBase64,
+      timestamp,
+    };
+
+    const key = this.getUserAudioKey(sessionId);
+    
+    this.logger.log(`🔑 Using Redis key: ${key} for session ${sessionId}`);
+    
+    const result = await this.redis.lpush(key, JSON.stringify(audioSegment));
+    await this.redis.expire(key, this.sessionTTL);
+    
+    this.logger.log(`🎤 Stored USER audio segment in Redis: ${audioBase64.length} chars (session: ${sessionId}), list length now: ${result}`);
+  }
+
+  /**
+   * Store a user transcription with audio (legacy method, kept for compatibility)
    */
   async storeUserTranscription(
     sessionId: string,
@@ -120,14 +152,40 @@ export class RedisStorageService {
   }
 
   /**
-   * Delete a session from Redis
+   * Retrieve all user audio segments for a session
+   */
+  async getUserAudioSegments(sessionId: string): Promise<StoredAudioSegment[]> {
+    const key = this.getUserAudioKey(sessionId);
+    const audioSegments = await this.redis.lrange(key, 0, -1);
+    
+    const parsedSegments = audioSegments
+      .map(segment => {
+        try {
+          return JSON.parse(segment) as StoredAudioSegment;
+        } catch (error) {
+          this.logger.error(`Failed to parse audio segment: ${segment}`, error);
+          return null;
+        }
+      })
+      .filter(segment => segment !== null)
+      .reverse(); // Reverse to get chronological order
+
+    this.logger.log(`Retrieved ${parsedSegments.length} audio segments for session ${sessionId}`);
+    return parsedSegments;
+  }
+
+  /**
+   * Delete a session from Redis (both messages and audio)
    */
   async deleteSession(sessionId: string): Promise<void> {
-    const key = this.getSessionKey(sessionId);
-    const deleted = await this.redis.del(key);
+    const messageKey = this.getSessionKey(sessionId);
+    const audioKey = this.getUserAudioKey(sessionId);
     
-    if (deleted > 0) {
-      this.logger.log(`Session ${sessionId} deleted from Redis`);
+    const deletedMessages = await this.redis.del(messageKey);
+    const deletedAudio = await this.redis.del(audioKey);
+    
+    if (deletedMessages > 0 || deletedAudio > 0) {
+      this.logger.log(`Session ${sessionId} deleted from Redis (messages: ${deletedMessages}, audio: ${deletedAudio})`);
     } else {
       this.logger.warn(`Session ${sessionId} not found in Redis during deletion`);
     }
@@ -135,6 +193,30 @@ export class RedisStorageService {
 
   private getSessionKey(sessionId: string): string {
     return `session:${sessionId}:messages`;
+  }
+
+  private getUserAudioKey(sessionId: string): string {
+    return `session:${sessionId}:user_audio`;
+  }
+
+  /**
+   * Debug method to check what's in Redis for a session
+   */
+  async debugSession(sessionId: string): Promise<void> {
+    const messageKey = this.getSessionKey(sessionId);
+    const audioKey = this.getUserAudioKey(sessionId);
+    
+    const messageCount = await this.redis.llen(messageKey);
+    const audioCount = await this.redis.llen(audioKey);
+    
+    this.logger.log(`🔍 DEBUG Session ${sessionId}: ${messageCount} messages, ${audioCount} audio segments`);
+    
+    if (audioCount > 0) {
+      const firstAudio = await this.redis.lindex(audioKey, 0);
+      const lastAudio = await this.redis.lindex(audioKey, -1);
+      this.logger.log(`🔍 First audio segment: ${firstAudio?.substring(0, 100)}...`);
+      this.logger.log(`🔍 Last audio segment: ${lastAudio?.substring(0, 100)}...`);
+    }
   }
 
   async onModuleDestroy() {

@@ -16,6 +16,7 @@ import { JwtService } from '../auth/jwt.service';
 import { EventEmitter } from 'events';
 import { Language } from '../schemas/user.schema';
 import { RedisStorageService } from './redis-storage.service';
+import { WhisperTranscriptionService } from './whisper-transcription.service';
 
 interface StartPracticePayload {
   userId: string;
@@ -50,11 +51,14 @@ export class RealtimePracticeGateway
   private readonly sessionToSocketMap = new Map<string, Socket>();
   private readonly socketToSessionMap = new Map<string, string>();
   private readonly userAudioChunks = new Map<string, string[]>(); // sessionId -> audio chunks
+  private readonly speechStartTimes = new Map<string, number>(); // sessionId -> speech start index
+  private readonly audioBuffer = new Map<string, { chunks: string[], totalSize: number, startTime: number }>(); // sessionId -> buffer info
 
   constructor(
     private readonly realtimeService: OpenAIRealtimeService,
     private readonly jwtService: JwtService,
     private readonly redisStorage: RedisStorageService,
+    private readonly whisperService: WhisperTranscriptionService,
   ) {}
 
   afterInit(): void {
@@ -141,9 +145,15 @@ export class RealtimePracticeGateway
     const sessionId = this.socketToSessionMap.get(client.id);
     if (sessionId) {
       this.logger.log(`Client ${client.id} disconnected from session ${sessionId}`);
+      
+      // Flush any remaining audio buffer before cleanup
+      void this.flushAudioBuffer(sessionId);
+      
       this.sessionToSocketMap.delete(sessionId);
       this.socketToSessionMap.delete(client.id);
       this.userAudioChunks.delete(sessionId); // Clean up audio chunks
+      this.speechStartTimes.delete(sessionId); // Clean up speech tracking
+      this.audioBuffer.delete(sessionId); // Clean up audio buffer
       // Cerrar sesión de OpenAI Realtime
       void this.realtimeService.closeSession(sessionId);
     }
@@ -179,9 +189,17 @@ export class RealtimePracticeGateway
         );
       }
 
-      const mode = payload.mode || 'practice'; // Por defecto es práctica libre
+      // Determine mode: check payload first, then sessionId pattern, default to practice
+      let mode = payload.mode || 'practice';
+      
+      // Auto-detect CEFR test mode from sessionId if not explicitly set
+      if (!payload.mode && payload.sessionId.includes('cefr-test')) {
+        mode = 'test';
+        this.logger.log(`🔍 Auto-detected CEFR test mode from sessionId: ${payload.sessionId}`);
+      }
+      
       this.logger.log(
-        `Starting ${mode} session ${payload.sessionId} for user ${finalUserId}`,
+        `🚀 Starting ${mode} session ${payload.sessionId} for user ${finalUserId}`,
       );
 
       // Crear sesión de OpenAI Realtime con configuración según el modo
@@ -240,51 +258,48 @@ export class RealtimePracticeGateway
   ): void {
     // Usuario empezó a hablar
     eventEmitter.on('user.speech.started', () => {
+      // Marcar el índice donde empezó a hablar
+      const currentChunks = this.userAudioChunks.get(sessionId) || [];
+      this.speechStartTimes.set(sessionId, currentChunks.length);
+      
+      this.logger.log(`🎤 User speech STARTED for session ${sessionId}, marking index: ${currentChunks.length}`);
       client.emit('user-speech-started', { sessionId, timestamp: Date.now() });
     });
 
-    // Usuario terminó de hablar
-    eventEmitter.on('user.speech.stopped', () => {
+    // Usuario terminó de hablar - flush buffer and commit audio
+    eventEmitter.on('user.speech.stopped', async () => {
+      this.logger.log(`🎤 User speech STOPPED for session ${sessionId}, flushing audio buffer`);
       client.emit('user-speech-stopped', { sessionId, timestamp: Date.now() });
-      // Commit del audio automáticamente después de que el usuario deje de hablar
+      
+      // Flush any remaining backup audio to Redis
+      await this.flushAudioBuffer(sessionId);
+      
+      // Commit the audio to OpenAI Realtime for María to respond
       this.realtimeService.commitAudio(sessionId);
     });
 
-    // Transcripción del usuario completada
+    // User transcription completed - OpenAI Realtime provides complete transcriptions
+    // This gives us full sentences/paragraphs instead of fragments
     eventEmitter.on('user.transcription.completed', async (event: any) => {
-      this.logger.log(`🎤 User transcription event received for session ${sessionId}`);
-      this.logger.log(`   Event structure: ${JSON.stringify(Object.keys(event))}`);
-      this.logger.log(`   Has item: ${!!event.item}`);
-      this.logger.log(`   Has transcript: ${!!event.item?.input_audio_transcription?.transcript}`);
-      
-      if (event.item?.input_audio_transcription?.transcript) {
+      if (event.transcript) {
         const timestamp = Date.now();
-        const transcript = event.item.input_audio_transcription.transcript;
         
-        this.logger.log(`✅ User said: "${transcript}"`);
+        this.logger.log(`👤 User transcription completed for session ${sessionId}: "${event.transcript}"`);
         
-        client.emit('user-transcription', {
-          sessionId,
-          text: transcript,
-          timestamp,
-        });
-
-        // Get accumulated audio chunks for this user message
-        const audioChunks = this.userAudioChunks.get(sessionId) || [];
-        const combinedAudio = audioChunks.join('');
-        
-        // Clear accumulated chunks after storing
-        this.userAudioChunks.set(sessionId, []);
-
-        // Store user transcription with audio in Redis
+        // Store user transcription in Redis (using the existing method)
         try {
-          await this.redisStorage.storeUserTranscription(sessionId, transcript, combinedAudio, timestamp);
-          this.logger.log(`💾 Stored user message in Redis: "${transcript}" with ${combinedAudio.length} chars of audio`);
+          await this.redisStorage.storeUserTranscription(sessionId, event.transcript, '', timestamp);
+          this.logger.log(`💾 Stored user transcription in Redis: "${event.transcript}" for session ${sessionId}`);
         } catch (error) {
           this.logger.error(`Failed to store user transcription in Redis for session ${sessionId}:`, error);
         }
-      } else {
-        this.logger.warn(`⚠️ User transcription event received but no transcript found`);
+        
+        // Emit to client for real-time feedback
+        client.emit('user-transcript-complete', {
+          sessionId,
+          text: event.transcript,
+          timestamp,
+        });
       }
     });
 
@@ -316,6 +331,16 @@ export class RealtimePracticeGateway
     eventEmitter.on('assistant.transcript.done', async (event: any) => {
       if (event.transcript) {
         const timestamp = Date.now();
+        
+        // Log all assistant messages for debugging
+        this.logger.debug(`🤖 Assistant message in session ${sessionId}: "${event.transcript}"`);
+        
+        // Check if this is the first message (greeting)
+        const isFirstMessage = event.transcript.toLowerCase().includes('hello') || 
+                              event.transcript.toLowerCase().includes('hola');
+        if (isFirstMessage) {
+          this.logger.log(`👋 First message detected in session ${sessionId}: "${event.transcript}"`);
+        }
         
         client.emit('assistant-transcript-complete', {
           sessionId,
@@ -365,10 +390,10 @@ export class RealtimePracticeGateway
   }
 
   @SubscribeMessage('audio-chunk')
-  handleAudioChunk(
+  async handleAudioChunk(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: AudioChunkPayload,
-  ): void {
+  ): Promise<void> {
     try {
       // Validar payload
       if (!payload) {
@@ -417,13 +442,28 @@ export class RealtimePracticeGateway
       try {
         const audioBuffer = Buffer.from(payload.audio, 'base64');
         
+        // Log audio chunk details
+        this.logger.log(`🎤 Audio chunk received from client ${client.id}, sessionId: ${sessionId}, audioLength: ${payload.audio.length}`);
+        this.logger.log(`✅ Sending audio chunk to OpenAI: session=${sessionId}, size=${audioBuffer.length} bytes, base64Length=${payload.audio.length} chars`);
+        
         this.realtimeService.sendAudio(sessionId, audioBuffer);
 
         // Accumulate user audio chunks for later analysis
         if (!this.userAudioChunks.has(sessionId)) {
           this.userAudioChunks.set(sessionId, []);
+          this.logger.log(`📦 Initialized audio chunks array for session ${sessionId}`);
         }
         this.userAudioChunks.get(sessionId)!.push(payload.audio);
+        
+        // Store audio chunks for backup (transcriptions come from OpenAI Realtime directly)
+        // We keep this for fallback in case transcriptions fail
+        await this.storeAudioChunkForBackup(sessionId, payload.audio);
+        
+        // Log every 25 chunks to track accumulation better
+        const totalChunks = this.userAudioChunks.get(sessionId)!.length;
+        if (totalChunks % 25 === 0) {
+          this.logger.log(`📦 Audio chunks accumulated for session ${sessionId}: ${totalChunks} chunks`);
+        }
 
         // Confirmar recepción
         client.emit('audio-chunk-received', {
@@ -462,10 +502,15 @@ export class RealtimePracticeGateway
     @MessageBody() payload: { sessionId: string },
   ): Promise<{ status: 'stopped' }> {
     try {
+      // Flush any remaining audio buffer before closing
+      await this.flushAudioBuffer(payload.sessionId);
+      
       await this.realtimeService.closeSession(payload.sessionId);
       this.sessionToSocketMap.delete(payload.sessionId);
       this.socketToSessionMap.delete(client.id);
       this.userAudioChunks.delete(payload.sessionId); // Clean up audio chunks
+      this.speechStartTimes.delete(payload.sessionId); // Clean up speech tracking
+      this.audioBuffer.delete(payload.sessionId); // Clean up audio buffer
 
       client.emit('practice-stopped', {
         sessionId: payload.sessionId,
@@ -513,5 +558,76 @@ export class RealtimePracticeGateway
       );
     }
   }
+
+  /**
+   * Store audio chunks for backup purposes (transcriptions come from OpenAI directly)
+   */
+  private async storeAudioChunkForBackup(sessionId: string, audioChunk: string): Promise<void> {
+    // Initialize buffer if it doesn't exist
+    if (!this.audioBuffer.has(sessionId)) {
+      this.audioBuffer.set(sessionId, {
+        chunks: [],
+        totalSize: 0,
+        startTime: Date.now(),
+      });
+      this.logger.debug(`🔄 Initialized audio backup buffer for session ${sessionId}`);
+    }
+
+    const buffer = this.audioBuffer.get(sessionId)!;
+    buffer.chunks.push(audioChunk);
+    buffer.totalSize += audioChunk.length;
+
+    // Store backup audio every 30 seconds or when buffer gets large
+    const elapsedTime = Date.now() - buffer.startTime;
+    const shouldStore = buffer.totalSize >= 500000 || elapsedTime >= 30000; // 30 seconds or ~10 seconds of audio
+    
+    if (shouldStore) {
+      const combinedAudio = buffer.chunks.join('');
+      const timestamp = Date.now();
+      
+      try {
+        await this.redisStorage.storeUserAudio(sessionId, combinedAudio, timestamp);
+        this.logger.debug(`💾 Stored backup audio in Redis: ${combinedAudio.length} chars for session ${sessionId}`);
+        
+        // Reset buffer
+        this.audioBuffer.set(sessionId, {
+          chunks: [],
+          totalSize: 0,
+          startTime: Date.now(),
+        });
+      } catch (error) {
+        this.logger.error(`❌ Error storing backup audio in Redis for session ${sessionId}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Flush any remaining backup audio buffer to Redis (called when user stops speaking or session ends)
+   */
+  private async flushAudioBuffer(sessionId: string): Promise<void> {
+    const buffer = this.audioBuffer.get(sessionId);
+    if (!buffer || buffer.chunks.length === 0) {
+      return;
+    }
+
+    const combinedAudio = buffer.chunks.join('');
+    const timestamp = Date.now();
+    
+    try {
+      await this.redisStorage.storeUserAudio(sessionId, combinedAudio, timestamp);
+      this.logger.debug(`💾 Flushed remaining backup audio to Redis: ${combinedAudio.length} chars for session ${sessionId}`);
+      
+      // Clear buffer
+      this.audioBuffer.set(sessionId, {
+        chunks: [],
+        totalSize: 0,
+        startTime: Date.now(),
+      });
+    } catch (error) {
+      this.logger.error(`❌ Error flushing backup audio to Redis for session ${sessionId}:`, error);
+    }
+  }
+
+
 }
 

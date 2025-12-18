@@ -99,7 +99,8 @@ export class LanguageAnalyticsService {
   analyzeCompletion(
     dto: CompletePracticeSessionDto,
   ): PracticeAnalyticsResult {
-    const feedback = this.normalizeFeedback(dto);
+    // Check if feedback exists, if not create default feedback
+    const feedback = dto.feedback ? this.normalizeFeedback(dto) : this.createInitialFeedback(dto.language, dto.level || 'A1');
     const averageScore =
       (feedback.pronunciation.score +
         feedback.grammar.score +
@@ -141,6 +142,11 @@ export class LanguageAnalyticsService {
   private normalizeFeedback(
     dto: CompletePracticeSessionDto,
   ): PracticeFeedbackAggregate {
+    // Add safety check for feedback existence
+    if (!dto.feedback) {
+      throw new Error('Feedback is required for normalizeFeedback method');
+    }
+    
     return {
       pronunciation: {
         score: dto.feedback.pronunciation.score,
