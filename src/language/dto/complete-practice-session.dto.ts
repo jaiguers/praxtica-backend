@@ -122,6 +122,15 @@ class NativeRangeDto {
   max: number;
 }
 
+class WordFrequencyDto {
+  @IsString()
+  word: string;
+
+  @IsNumber()
+  @Min(1)
+  count: number;
+}
+
 class FluencyFeedbackDto {
   @IsNumber()
   @Min(0)
@@ -139,6 +148,24 @@ class FluencyFeedbackDto {
   @IsNumber()
   @Min(0)
   pausesPerMinute: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  fillerWordsCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  fillerWordsRatio?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => WordFrequencyDto)
+  mostUsedWords?: WordFrequencyDto[];
 }
 
 class ConversationTranscriptItemDto {

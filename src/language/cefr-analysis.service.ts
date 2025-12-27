@@ -9,6 +9,8 @@ export interface CefrAnalysisResult {
   feedback: PracticeFeedbackAggregate;
   confidence: number;
   analysisNotes: string;
+  extractedLevel?: CefrLevel; // Level extracted from AI response
+  audioSuppressed?: boolean; // Whether audio was suppressed for evaluation
 }
 
 @Injectable()
@@ -20,6 +22,60 @@ export class CefrAnalysisService {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
+  }
+
+  /**
+   * Extract CEFR level from AI evaluation response text
+   */
+  extractCefrLevelFromResponse(responseText: string): CefrLevel | null {
+    if (!responseText) return null;
+
+    // Patterns to detect CEFR level in evaluation responses
+    const patterns = [
+      /I believe you have a?n? ([ABC][12]) level/i,
+      /your level is ([ABC][12])/i,
+      /you are at a?n? ([ABC][12]) level/i,
+      /([ABC][12]) level in (English|Spanish)/i,
+      /determined to be ([ABC][12])/i,
+      /assess you as ([ABC][12])/i,
+      /place you at ([ABC][12])/i,
+      /creo que tienes un nivel ([ABC][12])/i, // Spanish pattern
+      /tu nivel es ([ABC][12])/i, // Spanish pattern
+    ];
+
+    for (const pattern of patterns) {
+      const match = responseText.match(pattern);
+      if (match && match[1]) {
+        const level = match[1].toUpperCase() as CefrLevel;
+        // Validate it's a valid CEFR level
+        if (['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(level)) {
+          this.logger.log(`🎯 Extracted CEFR level: ${level} from response: "${responseText.substring(0, 100)}..."`);
+          return level;
+        }
+      }
+    }
+
+    this.logger.warn(`⚠️ Could not extract CEFR level from response: "${responseText.substring(0, 100)}..."`);
+    return null;
+  }
+
+  /**
+   * Check if a response text is a final evaluation response
+   */
+  isEvaluationResponse(responseText: string): boolean {
+    if (!responseText) return false;
+
+    const evaluationIndicators = [
+      /based on our conversation/i,
+      /I believe you have/i,
+      /your level is/i,
+      /thank you for taking the placement test/i,
+      /assessment complete/i,
+      /evaluation complete/i,
+      /final assessment/i,
+    ];
+
+    return evaluationIndicators.some(pattern => pattern.test(responseText));
   }
 
   /**
@@ -120,6 +176,13 @@ Analyze the following conversation and provide a comprehensive CEFR assessment. 
 CONVERSATION:
 ${conversationText}
 
+ENHANCED ANALYSIS REQUIREMENTS:
+
+1. PRONUNCIATION: Identify specific mispronounced words and provide IPA notation for correct pronunciation
+2. FLUENCY: Analyze speech patterns, filler word usage (um, uh, like, you know, etc.), and natural flow
+3. VOCABULARY: Suggest advanced alternatives for basic words used, considering CEFR level appropriateness
+4. GRAMMAR: Provide specific examples and corrections for errors found
+
 Provide your analysis as a JSON object with this exact structure:
 {
   "level": "A1|A2|B1|B2|C1|C2",
@@ -133,7 +196,7 @@ Provide your analysis as a JSON object with this exact structure:
           "attempts": 1,
           "lastHeard": "${new Date().toISOString()}",
           "ipa": "ɪɡˈzæmpəl",
-          "notes": "Difficulty with vowel sounds"
+          "notes": "Difficulty with vowel sounds - focus on /æ/ sound"
         }
       ]
     },
@@ -144,35 +207,65 @@ Provide your analysis as a JSON object with this exact structure:
           "type": "verb_tense",
           "example": "I go yesterday",
           "correction": "I went yesterday",
-          "notes": "Past tense confusion"
+          "notes": "Past tense confusion - use 'went' for past actions"
         }
       ]
     },
     "vocabulary": {
       "score": 0-100,
       "rareWordsUsed": ["sophisticated", "elaborate"],
-      "repeatedWords": ["very", "good"],
-      "suggestedWords": ["excellent", "remarkable"]
+      "repeatedWords": ["very", "good", "nice"],
+      "suggestedWords": ["excellent instead of good", "remarkable instead of very good", "outstanding instead of nice"]
     },
     "fluency": {
       "score": 0-100,
       "wordsPerMinute": ${wordsPerMinute},
       "nativeRange": {"min": 120, "max": 180},
-      "pausesPerMinute": 5
+      "pausesPerMinute": 5,
+      "fillerWordsCount": 0,
+      "fillerWordsRatio": 0.0,
+      "mostUsedWords": [{"word": "like", "count": 8}, {"word": "um", "count": 5}]
     }
   },
   "notes": "Detailed assessment notes explaining the level determination"
 }
 
 CEFR Level Guidelines:
-- A1: Basic phrases, present tense, simple vocabulary, 60-90 WPM
-- A2: Simple past/future, basic conversations, 80-110 WPM  
-- B1: Complex sentences, opinions, 100-130 WPM
-- B2: Abstract topics, nuanced expression, 120-150 WPM
-- C1: Sophisticated language, subtle meanings, 140-170 WPM
-- C2: Native-like fluency and complexity, 160-200 WPM
+- A1: Basic phrases, present tense, simple vocabulary, 60-90 WPM, high filler word usage (>15%)
+- A2: Simple past/future, basic conversations, 80-110 WPM, moderate filler words (10-15%)
+- B1: Complex sentences, opinions, 100-130 WPM, occasional filler words (5-10%)
+- B2: Abstract topics, nuanced expression, 120-150 WPM, minimal filler words (2-5%)
+- C1: Sophisticated language, subtle meanings, 140-170 WPM, rare filler words (<2%)
+- C2: Native-like fluency and complexity, 160-200 WPM, natural speech patterns (<1%)
 
-Focus on grammar accuracy, vocabulary range, sentence complexity, and fluency. Be precise and constructive in your feedback.`;
+ANALYSIS FOCUS:
+- Grammar accuracy and complexity
+- Vocabulary range and sophistication
+- Sentence structure and complexity
+- Fluency and natural speech patterns (including filler word analysis)
+- Pronunciation clarity and accuracy
+- Word repetition and variety
+
+VOCABULARY vs FLUENCY ANALYSIS:
+- vocabulary.repeatedWords: Basic words used repeatedly that could be replaced with more advanced alternatives
+- vocabulary.suggestedWords: Advanced alternatives for the basic words (format: "advanced word instead of basic word")
+- fluency.mostUsedWords: All frequently used words including filler words that affect speech naturalness
+- fluency.fillerWordsCount: Total count of filler words (um, uh, like, etc.)
+- fluency.fillerWordsRatio: Percentage of filler words vs total words
+
+For vocabulary suggestions, provide words that are:
+- One level above the user's current usage
+- Contextually appropriate
+- Commonly used by native speakers
+- Suitable for the conversation topic
+- Format as "advanced_word instead of basic_word"
+
+For pronunciation, focus on:
+- Common phonetic challenges for ${languageName} learners
+- Specific IPA notation for mispronounced sounds
+- Practical improvement suggestions
+
+Count and analyze filler words like: ${language === 'english' ? 'um, uh, like, you know, actually, basically, literally' : 'eh, este, pues, o sea, bueno, entonces, como que'}`;
   }
 
   private mapToFeedbackStructure(feedbackData: any, wordsPerMinute: number): PracticeFeedbackAggregate {
@@ -183,17 +276,17 @@ Focus on grammar accuracy, vocabulary range, sentence complexity, and fluency. B
           word: word.word || '',
           attempts: word.attempts || 1,
           lastHeard: new Date(word.lastHeard || Date.now()),
-          ipa: word.ipa,
-          notes: word.notes,
+          ipa: word.ipa || '',
+          notes: word.notes || '',
         })),
       },
       grammar: {
         score: feedbackData?.grammar?.score || 50,
         errors: (feedbackData?.grammar?.errors || []).map((error: any) => ({
           type: error.type || 'unknown',
-          example: error.example,
-          correction: error.correction,
-          notes: error.notes,
+          example: error.example || '',
+          correction: error.correction || '',
+          notes: error.notes || '',
         })),
       },
       vocabulary: {
@@ -207,6 +300,9 @@ Focus on grammar accuracy, vocabulary range, sentence complexity, and fluency. B
         wordsPerMinute: wordsPerMinute,
         nativeRange: feedbackData?.fluency?.nativeRange || { min: 100, max: 150 },
         pausesPerMinute: feedbackData?.fluency?.pausesPerMinute || 0,
+        fillerWordsCount: feedbackData?.fluency?.fillerWordsCount || 0,
+        fillerWordsRatio: feedbackData?.fluency?.fillerWordsRatio || 0,
+        mostUsedWords: feedbackData?.fluency?.mostUsedWords || [],
       },
     };
   }
@@ -232,6 +328,9 @@ Focus on grammar accuracy, vocabulary range, sentence complexity, and fluency. B
         wordsPerMinute,
         nativeRange: { min: 100, max: 150 },
         pausesPerMinute: 0,
+        fillerWordsCount: 0,
+        fillerWordsRatio: 0,
+        mostUsedWords: [],
       },
     };
   }

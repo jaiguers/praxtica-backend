@@ -33,6 +33,9 @@ export interface PracticeFeedbackAggregate {
     wordsPerMinute: number;
     nativeRange: { min: number; max: number };
     pausesPerMinute: number;
+    fillerWordsCount?: number;
+    fillerWordsRatio?: number;
+    mostUsedWords?: { word: string; count: number }[];
   };
 }
 
@@ -92,12 +95,16 @@ export class LanguageAnalyticsService {
         wordsPerMinute: 0,
         nativeRange,
         pausesPerMinute: 0,
+        fillerWordsCount: 0,
+        fillerWordsRatio: 0,
+        mostUsedWords: [],
       },
     };
   }
 
   analyzeCompletion(
     dto: CompletePracticeSessionDto,
+    extractedLevel?: CefrLevel,
   ): PracticeAnalyticsResult {
     // Check if feedback exists, if not create default feedback
     const feedback = dto.feedback ? this.normalizeFeedback(dto) : this.createInitialFeedback(dto.language, dto.level || 'A1');
@@ -108,7 +115,8 @@ export class LanguageAnalyticsService {
         feedback.fluency.score) /
       4;
 
-    const recommendedLevel = this.recommendLevel(dto.level, averageScore);
+    // Use extracted level if available, otherwise use recommendation based on scores
+    const recommendedLevel = extractedLevel || this.recommendLevel(dto.level, averageScore);
     const fluencyMidpoint =
       (feedback.fluency.nativeRange.min + feedback.fluency.nativeRange.max) / 2;
     const fluencyRatio =
@@ -175,6 +183,9 @@ export class LanguageAnalyticsService {
           max: dto.feedback.fluency.nativeRange.max,
         },
         pausesPerMinute: dto.feedback.fluency.pausesPerMinute,
+        fillerWordsCount: dto.feedback.fluency.fillerWordsCount,
+        fillerWordsRatio: dto.feedback.fluency.fillerWordsRatio,
+        mostUsedWords: dto.feedback.fluency.mostUsedWords,
       },
     };
   }

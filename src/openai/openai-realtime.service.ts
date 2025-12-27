@@ -224,7 +224,12 @@ Your role is to:
 - Keep the test focused and efficient
 - After each COMPLETE response, provide brief, constructive feedback
 - Do not engage in casual conversation - this is a formal assessment
-- NEVER respond to partial words or fragments - wait for complete sentences`;
+- NEVER respond to partial words or fragments - wait for complete sentences
+
+FINAL EVALUATION: When the test is complete (after 3-4 questions), provide a final assessment in this EXACT format:
+"Based on our conversation, I believe you have a [LEVEL] level in English. Thank you for taking the placement test."
+Where [LEVEL] must be one of: A1, A2, B1, B2, C1, or C2.
+This final message should be TEXT ONLY (no audio) as the conversation has ended.`;
       } else {
         systemPrompt = `Eres Maria, una evaluadora profesional de CEFR (Marco Común Europeo de Referencia) realizando un examen de nivelación formal de español.
 
@@ -237,7 +242,12 @@ Tu rol es:
 - Proporcionar preguntas claras y específicas que ayuden a determinar el nivel CEFR del usuario (A1, A2, B1, B2, C1, C2)
 - Mantener el examen enfocado y eficiente
 - Después de cada respuesta, proporcionar retroalimentación breve y constructiva
-- No entablar conversación casual - esto es una evaluación formal`;
+- No entablar conversación casual - esto es una evaluación formal
+
+EVALUACIÓN FINAL: Cuando el examen esté completo (después de 3-4 preguntas), proporciona una evaluación final en este formato EXACTO:
+"Basándome en nuestra conversación, creo que tienes un nivel [NIVEL] en español. Gracias por tomar el examen de nivelación."
+Donde [NIVEL] debe ser uno de: A1, A2, B1, B2, C1, o C2.
+Este mensaje final debe ser SOLO TEXTO (sin audio) ya que la conversación ha terminado.`;
       }
     } else {
       // Modo práctica libre: conversación natural con saludo inicial
@@ -354,10 +364,26 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         break;
 
       case 'response.audio_transcript.done':
+        // Check if this is an evaluation response and should suppress audio
+        const transcriptEvent = event as any;
+        if (transcriptEvent.transcript) {
+          const isEvaluation = this.isEvaluationResponse(transcriptEvent.transcript);
+          if (isEvaluation) {
+            this.logger.log(`🔇 Suppressing audio for evaluation response: "${transcriptEvent.transcript.substring(0, 100)}..."`);
+            // Emit special event for evaluation response
+            eventEmitter.emit('assistant.evaluation.completed', {
+              ...event,
+              audioSuppressed: true,
+            });
+            return; // Don't emit the normal transcript.done event
+          }
+        }
         eventEmitter.emit('assistant.transcript.done', event);
         break;
 
       case 'response.audio.delta':
+        // Check if we should suppress this audio delta for evaluation responses
+        // We need to track the current response text to make this decision
         eventEmitter.emit('assistant.audio.delta', event);
         break;
 
@@ -392,6 +418,61 @@ Habla de forma natural y ayuda al usuario a practicar conversación en español.
         // Silently ignore unhandled events
         break;
     }
+  }
+
+  /**
+   * Extract CEFR level from AI evaluation response text
+   */
+  extractCefrLevelFromResponse(responseText: string): string | null {
+    if (!responseText) return null;
+
+    // Patterns to detect CEFR level in evaluation responses
+    const patterns = [
+      /I believe you have a?n? ([ABC][12]) level/i,
+      /your level is ([ABC][12])/i,
+      /you are at a?n? ([ABC][12]) level/i,
+      /([ABC][12]) level in (English|Spanish)/i,
+      /determined to be ([ABC][12])/i,
+      /assess you as ([ABC][12])/i,
+      /place you at ([ABC][12])/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = responseText.match(pattern);
+      if (match && match[1]) {
+        const level = match[1].toUpperCase();
+        // Validate it's a valid CEFR level
+        if (['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(level)) {
+          this.logger.log(`🎯 Extracted CEFR level: ${level} from realtime response`);
+          return level;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a response text is a final evaluation response
+   */
+  private isEvaluationResponse(responseText: string): boolean {
+    if (!responseText) return false;
+
+    const evaluationIndicators = [
+      /based on our conversation/i,
+      /I believe you have/i,
+      /your level is/i,
+      /thank you for taking the placement test/i,
+      /assessment complete/i,
+      /evaluation complete/i,
+      /final assessment/i,
+      /([ABC][12]) level in (English|Spanish)/i,
+      /basándome en nuestra conversación/i, // Spanish pattern
+      /creo que tienes/i, // Spanish pattern
+      /gracias por tomar el examen/i, // Spanish pattern
+    ];
+
+    return evaluationIndicators.some(pattern => pattern.test(responseText));
   }
 
   /**

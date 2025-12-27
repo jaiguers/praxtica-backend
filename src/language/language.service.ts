@@ -432,8 +432,20 @@ export class LanguageService {
         ),
       );
 
-    let cefrAnalysisResult;
+    let cefrAnalysisResult: any;
     let analytics: PracticeAnalyticsResult;
+    let extractedLevel: CefrLevel | null = null;
+    
+    // Check if any assistant messages contain CEFR level evaluation
+    const assistantMessages = messages.filter(msg => msg.role === 'assistant');
+    for (const message of assistantMessages) {
+      const level = this.cefrAnalysis.extractCefrLevelFromResponse(message.text);
+      if (level) {
+        extractedLevel = level;
+        this.logger.log(`🎯 Extracted CEFR level from realtime response: ${level}`);
+        break;
+      }
+    }
     
     if (isCefrTest && messages.length > 0) {
       
@@ -452,23 +464,30 @@ export class LanguageService {
           session.durationSeconds,
         );
 
+        // Use extracted level if available, otherwise use analysis result
+        const finalLevel = extractedLevel || cefrAnalysisResult.level;
+        
+        // Update analysis result with extracted level info
+        cefrAnalysisResult.extractedLevel = extractedLevel;
+        cefrAnalysisResult.audioSuppressed = !!extractedLevel; // Audio was suppressed if we found evaluation
+
         // Update session with CEFR analysis results
-        session.level = cefrAnalysisResult.level;
+        session.level = finalLevel;
         session.pronunciation = cefrAnalysisResult.feedback.pronunciation as any;
         session.grammar = cefrAnalysisResult.feedback.grammar as any;
         session.vocabulary = cefrAnalysisResult.feedback.vocabulary as any;
         session.fluency = cefrAnalysisResult.feedback.fluency as any;
 
-        this.logger.log(`CEFR analysis completed. Level determined: ${cefrAnalysisResult.level}`);
+        this.logger.log(`CEFR analysis completed. Final level: ${finalLevel} (extracted: ${extractedLevel}, analyzed: ${cefrAnalysisResult.level})`);
       } catch (error) {
         this.logger.error('Error during CEFR analysis:', error);
         // Keep original session data if analysis fails
       }
     } else {
       // For regular practice sessions, use the existing analytics
-      analytics = this.analyticsService.analyzeCompletion(dto);
+      analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
       this.applyPracticeFeedback(session, dto, analytics.feedback);
-      session.level = dto.level || session.level;
+      session.level = extractedLevel || dto.level || session.level;
     }
 
     // Create analytics for completion event (use default if CEFR test)
@@ -520,7 +539,7 @@ export class LanguageService {
     }
 
     // Update user's current level
-    const finalLevel = cefrAnalysisResult?.level || session.level;
+    const finalLevel = extractedLevel || cefrAnalysisResult?.level || session.level;
     this.upsertCurrentLevel(
       user,
       dto.language,
