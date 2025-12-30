@@ -11,6 +11,7 @@ import {
 import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { LanguageService } from './language.service';
+import { MigrationService } from './migration.service';
 import { CreateLanguageTestDto } from './dto/create-language-test.dto';
 import { StartPracticeSessionDto } from './dto/start-practice-session.dto';
 import { CompletePracticeSessionDto } from './dto/complete-practice-session.dto';
@@ -18,7 +19,10 @@ import { CompletePracticeSessionDto } from './dto/complete-practice-session.dto'
 @Controller('api/language')
 @UseGuards(JwtAuthGuard)
 export class LanguageController {
-  constructor(private readonly languageService: LanguageService) {}
+  constructor(
+    private readonly languageService: LanguageService,
+    private readonly migrationService: MigrationService,
+  ) {}
 
   @Post('users/:userId/tests')
   createLanguageTest(
@@ -36,13 +40,18 @@ export class LanguageController {
     return this.languageService.startPracticeSession(userId, dto);
   }
 
-  @Patch('users/:userId/practice-sessions/:sessionId/complete')
+  @Post('users/:userId/practice-sessions/:sessionId/complete')
   completePracticeSession(
     @Param('userId') userId: string,
     @Param('sessionId') sessionId: string,
     @Body() dto: CompletePracticeSessionDto,
   ) {
     return this.languageService.completePracticeSession(userId, sessionId, dto);
+  }
+
+  @Post('migrate/practice-session-titles')
+  async migratePracticeSessionTitles() {
+    return this.migrationService.migratePracticeSessionTitles();
   }
 
   @Sse('users/:userId/practice-sessions/:sessionId/stream')

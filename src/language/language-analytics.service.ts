@@ -42,6 +42,7 @@ export interface PracticeFeedbackAggregate {
 export interface PracticeAnalyticsResult {
   feedback: PracticeFeedbackAggregate;
   conversationLog?: {
+    title?: string;
     transcript?: {
       role: 'user' | 'assistant';
       text: string;
@@ -126,6 +127,7 @@ export class LanguageAnalyticsService {
 
     const conversationLog = dto.conversationLog
       ? {
+          title: dto.conversationLog.title,
           transcript: dto.conversationLog.transcript?.map((item) => ({
             ...item,
             timestamp: item.timestamp,

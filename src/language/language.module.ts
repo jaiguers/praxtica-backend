@@ -10,6 +10,7 @@ import { LanguageAnalyticsService } from './language-analytics.service';
 import { RedisStorageService } from './redis-storage.service';
 import { CefrAnalysisService } from './cefr-analysis.service';
 import { WhisperTranscriptionService } from './whisper-transcription.service';
+import { MigrationService } from './migration.service';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { WhisperTranscriptionService } from './whisper-transcription.service';
     RedisStorageService,
     CefrAnalysisService,
     WhisperTranscriptionService,
+    MigrationService,
   ],
   exports: [LanguageService],
 })

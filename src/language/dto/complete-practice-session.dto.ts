@@ -190,6 +190,10 @@ class ConversationAudioItemDto {
 
 class ConversationLogDto {
   @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)

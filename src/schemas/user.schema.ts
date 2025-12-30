@@ -92,6 +92,23 @@ export class FluencyFeedback {
 
   @Prop({ min: 0, required: true })
   pausesPerMinute: number;
+
+  @Prop({ min: 0, default: 0 })
+  fillerWordsCount?: number;
+
+  @Prop({ min: 0, max: 1, default: 0 })
+  fillerWordsRatio?: number;
+
+  @Prop({
+    type: [
+      {
+        word: { type: String, required: true },
+        count: { type: Number, min: 1, required: true },
+      },
+    ],
+    default: [],
+  })
+  mostUsedWords?: { word: string; count: number }[];
 }
 
 export const PronunciationFeedbackSchema = SchemaFactory.createForClass(
@@ -196,6 +213,7 @@ export class PracticeSession {
 
   @Prop({
     type: {
+      title: { type: String, required: false, default: '' },
       transcript: [
         {
           role: { type: String, enum: ['user', 'assistant'], required: true },
@@ -212,6 +230,7 @@ export class PracticeSession {
     },
   })
   conversationLog?: {
+    title?: string;
     transcript: { role: 'user' | 'assistant'; text: string; timestamp: number }[];
     audioUrls: { role: 'user' | 'assistant'; url: string }[];
   };

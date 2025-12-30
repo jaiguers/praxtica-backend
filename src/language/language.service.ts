@@ -180,6 +180,7 @@ export class LanguageService {
       fluency: feedback.fluency,
       completed: false,
       conversationLog: {
+        title: '',
         transcript: [],
         audioUrls: [],
       },
@@ -402,6 +403,7 @@ export class LanguageService {
         fluency: feedback.fluency,
         completed: false,
         conversationLog: {
+          title: '',
           transcript: [],
           audioUrls: [],
         },
@@ -419,8 +421,11 @@ export class LanguageService {
       this.logger.log(`📝 Message ${index + 1}: [${msg.role}] "${msg.text.substring(0, 50)}..." (length: ${msg.text.length})`);
     });
 
-    // Determine if this is a CEFR test based on sessionId
-    const isCefrTest = sessionId.includes('cefr-test');
+    // Determine if this is a CEFR test based on sessionId or mode
+    const isCefrTest = sessionId.includes('cefr-test') || sessionId.includes('test');
+    
+    // Generate appropriate title (will be set later after we have messages)
+    let conversationTitle = '';
 
     session.endedAt = new Date(dto.endedAt);
     session.durationSeconds =
@@ -481,12 +486,42 @@ export class LanguageService {
         this.logger.log(`CEFR analysis completed. Final level: ${finalLevel} (extracted: ${extractedLevel}, analyzed: ${cefrAnalysisResult.level})`);
       } catch (error) {
         this.logger.error('Error during CEFR analysis:', error);
-        // Keep original session data if analysis fails
+        // Keep original session data if analysis fails, but still use extracted level if available
+        if (extractedLevel) {
+          session.level = extractedLevel;
+          this.logger.log(`Using extracted level ${extractedLevel} despite analysis failure`);
+        }
+      }
+    } else if (messages.length > 0) {
+      // For regular practice sessions with conversation data, also run CEFR analysis for better feedback
+      try {
+        cefrAnalysisResult = await this.cefrAnalysis.analyzeCefrLevel(
+          dto.language,
+          messages,
+          session.durationSeconds,
+        );
+
+        // Update session with analysis results but don't change level for practice sessions
+        session.pronunciation = cefrAnalysisResult.feedback.pronunciation as any;
+        session.grammar = cefrAnalysisResult.feedback.grammar as any;
+        session.vocabulary = cefrAnalysisResult.feedback.vocabulary as any;
+        session.fluency = cefrAnalysisResult.feedback.fluency as any;
+
+        this.logger.log(`Practice session analysis completed. Feedback updated.`);
+      } catch (error) {
+        this.logger.error('Error during practice session analysis:', error);
+        // Fall back to DTO feedback if available
+        if (dto.feedback) {
+          analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
+          this.applyPracticeFeedback(session, dto, analytics.feedback);
+        }
       }
     } else {
-      // For regular practice sessions, use the existing analytics
-      analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
-      this.applyPracticeFeedback(session, dto, analytics.feedback);
+      // No conversation data available, use DTO feedback if provided
+      if (dto.feedback) {
+        analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
+        this.applyPracticeFeedback(session, dto, analytics.feedback);
+      }
       session.level = extractedLevel || dto.level || session.level;
     }
 
@@ -527,8 +562,15 @@ export class LanguageService {
     // Filter out empty messages for cleaner storage
     const validMessages = messages.filter(msg => msg.text && msg.text.trim().length > 0);
 
+    // Generate conversation title based on content
+    conversationTitle = await this.generateConversationTitle(dto.language, isCefrTest, validMessages, userId);
+    this.logger.log(`📝 Generated conversation title: "${conversationTitle}"`);
+
     if (validMessages.length > 0) {
       session.conversationLog = {
+        title: conversationTitle || (isCefrTest 
+          ? (dto.language === 'english' ? 'Placement Test' : 'Examen de Nivelación')
+          : (dto.language === 'english' ? 'Practice Session' : 'Sesión de Práctica')),
         transcript: validMessages.map(msg => ({
           role: msg.role,
           text: msg.text,
@@ -536,10 +578,51 @@ export class LanguageService {
         })),
         audioUrls: [], // Audio URLs would be generated separately if needed
       } as any;
+    } else {
+      // Even if no messages, set the title
+      session.conversationLog = {
+        title: conversationTitle || (isCefrTest 
+          ? (dto.language === 'english' ? 'Placement Test' : 'Examen de Nivelación')
+          : (dto.language === 'english' ? 'Practice Session' : 'Sesión de Práctica')),
+        transcript: [],
+        audioUrls: [],
+      } as any;
     }
 
-    // Update user's current level
+    // Update user's current level and save test result if it's a CEFR test
     const finalLevel = extractedLevel || cefrAnalysisResult?.level || session.level;
+    
+    if (isCefrTest && cefrAnalysisResult) {
+      // Save as official language test result
+      if (!user.languageTests) {
+        user.languageTests = new Map() as unknown as typeof user.languageTests;
+      }
+
+      const languageTest: LanguageTest = {
+        language: dto.language,
+        date: new Date(dto.endedAt),
+        level: finalLevel,
+        score: analytics.metrics.averageScore,
+        breakdown: {
+          grammar: cefrAnalysisResult.feedback.grammar.score,
+          pronunciation: cefrAnalysisResult.feedback.pronunciation.score,
+          vocabulary: cefrAnalysisResult.feedback.vocabulary.score,
+          fluency: cefrAnalysisResult.feedback.fluency.score,
+        },
+        metadata: {
+          aiModel: 'gpt-4o-realtime',
+          durationSeconds: session.durationSeconds,
+          notes: `CEFR evaluation completed. Extracted level: ${extractedLevel || 'N/A'}, Analyzed level: ${cefrAnalysisResult.level}`,
+          attachments: [], // Could add audio/transcript URLs here if needed
+        },
+      };
+
+      user.languageTests.set(dto.language, languageTest as any);
+      user.markModified('languageTests');
+      
+      this.logger.log(`💾 Saved CEFR test result: ${finalLevel} for ${dto.language}`);
+    }
+    
     this.upsertCurrentLevel(
       user,
       dto.language,
@@ -612,7 +695,8 @@ export class LanguageService {
     session.fluency = feedback.fluency as any;
 
     if (dto.conversationLog?.transcript?.length) {
-      session.conversationLog ??= { transcript: [], audioUrls: [] };
+      session.conversationLog ??= { title: '', transcript: [], audioUrls: [] };
+      session.conversationLog.title = dto.conversationLog.title || session.conversationLog.title || 'Practice Session';
       session.conversationLog.transcript = dto.conversationLog.transcript.map(
         (item) => ({
           ...item,
@@ -621,7 +705,8 @@ export class LanguageService {
     }
 
     if (dto.conversationLog?.audioUrls?.length) {
-      session.conversationLog ??= { transcript: [], audioUrls: [] };
+      session.conversationLog ??= { title: '', transcript: [], audioUrls: [] };
+      session.conversationLog.title = session.conversationLog.title || 'Practice Session';
       session.conversationLog.audioUrls = dto.conversationLog.audioUrls.map(
         (item) => ({ ...item }),
       );
@@ -729,6 +814,109 @@ export class LanguageService {
     timestamp: number,
   ): Promise<void> {
     await this.redisStorage.storeAssistantResponse(sessionId, text, audioBase64, timestamp);
+  }
+
+  /**
+   * Generate conversation title based on language and mode
+   */
+  private async generateConversationTitle(
+    language: Language, 
+    isCefrTest: boolean, 
+    messages?: any[], 
+    userId?: string
+  ): Promise<string> {
+    if (isCefrTest) {
+      return language === 'english' ? 'Placement Test' : 'Examen de Nivelación';
+    }
+    
+    // For practice sessions, try to generate AI title first
+    if (messages && messages.length > 2) {
+      try {
+        const aiTitle = await this.generateAITitle(language, messages);
+        if (aiTitle && aiTitle.trim().length > 0) {
+          return aiTitle;
+        }
+      } catch (error) {
+        this.logger.warn('Failed to generate AI title, using fallback', error);
+      }
+    }
+    
+    // Fallback: Use numbered practice sessions
+    if (userId) {
+      const practiceNumber = await this.getNextPracticeNumber(userId, language);
+      return language === 'english' 
+        ? `Practice #${practiceNumber}` 
+        : `Práctica #${practiceNumber}`;
+    }
+    
+    // Final fallback
+    return language === 'english' ? 'Practice Session' : 'Sesión de Práctica';
+  }
+
+  /**
+   * Generate AI-based title from conversation content
+   */
+  private async generateAITitle(language: Language, messages: any[]): Promise<string | null> {
+    try {
+      // Get user messages to understand conversation topics
+      const userMessages = messages
+        .filter(msg => msg.role === 'user' && msg.text && msg.text.trim().length > 0)
+        .slice(0, 5) // Use first 5 user messages
+        .map(msg => msg.text)
+        .join(' ');
+
+      if (userMessages.length < 10) {
+        return null; // Not enough content for meaningful title
+      }
+
+      const prompt = language === 'english' 
+        ? `Based on this conversation excerpt, create a short, descriptive title (max 4 words) that captures the main topic discussed: "${userMessages}". Respond with just the title, no quotes or extra text.`
+        : `Basándote en este fragmento de conversación, crea un título corto y descriptivo (máximo 4 palabras) que capture el tema principal discutido: "${userMessages}". Responde solo con el título, sin comillas ni texto extra.`;
+
+      const response = await this.realtimeService['openai'].chat.completions.create({
+        model: 'gpt-4o-mini', // Use faster model for title generation
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 20,
+      });
+
+      const title = response.choices[0]?.message?.content?.trim();
+      
+      // Validate title (reasonable length, no weird characters)
+      if (title && title.length <= 50 && title.length >= 3 && !/[<>{}[\]]/g.test(title)) {
+        return title;
+      }
+      
+      return null;
+    } catch (error) {
+      this.logger.warn('Error generating AI title:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get next practice session number for user
+   */
+  private async getNextPracticeNumber(userId: string, language: Language): Promise<number> {
+    try {
+      const user = await this.userModel.findById(userId).exec();
+      if (!user || !user.practiceSessions) {
+        return 1;
+      }
+
+      // Count existing practice sessions for this language (excluding tests)
+      const practiceCount = user.practiceSessions.filter(session => 
+        session.language === language && 
+        session.conversationLog?.title && 
+        !session.conversationLog.title.toLowerCase().includes('test') &&
+        !session.conversationLog.title.toLowerCase().includes('examen')
+      ).length;
+
+      return practiceCount + 1;
+    } catch (error) {
+      this.logger.warn('Error getting practice number:', error);
+      return 1;
+    }
   }
 }
 
