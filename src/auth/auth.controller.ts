@@ -30,7 +30,6 @@ export class AuthController {
     accessToken: string;
     username: string;
   }) {
-    console.log('registerGitHubUser');
     return this.authService.registerGitHubUser(userData);
   }
 

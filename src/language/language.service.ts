@@ -390,9 +390,21 @@ export class LanguageService {
       
       const feedback = this.analyticsService.createInitialFeedback(dto.language, dto.level || 'A1');
       
+      // Calculate proper start time - ensure it's a valid date
+      const endTime = new Date(dto.endedAt);
+      const durationMs = (dto.durationSeconds || 0) * 1000;
+      const startTime = new Date(endTime.getTime() - durationMs);
+      
+      // Validate the calculated start time - if it's invalid, use a reasonable default
+      const validStartTime = isNaN(startTime.getTime()) || startTime.getTime() < 0 
+        ? new Date(endTime.getTime() - 300000) // Default to 5 minutes before end time
+        : startTime;
+      
+      this.logger.log(`Creating session with startedAt: ${validStartTime.toISOString()}, endedAt: ${endTime.toISOString()}, duration: ${dto.durationSeconds}s`);
+      
       session = {
         _id: sessionId as any,
-        startedAt: new Date(Date.now() - (dto.durationSeconds || 0) * 1000), // Estimate start time
+        startedAt: validStartTime,
         language: dto.language,
         level: dto.level || 'A1',
         durationSeconds: 0,
@@ -426,6 +438,10 @@ export class LanguageService {
     
     // Generate appropriate title (will be set later after we have messages)
     let conversationTitle = '';
+
+    // Preserve the original level from DTO if provided, otherwise use session level
+    const originalLevel = dto.level || session.level;
+    this.logger.log(`🎯 Original level from DTO: ${dto.level}, Session level: ${session.level}, Using: ${originalLevel}`);
 
     session.endedAt = new Date(dto.endedAt);
     session.durationSeconds =
@@ -469,8 +485,8 @@ export class LanguageService {
           session.durationSeconds,
         );
 
-        // Use extracted level if available, otherwise use analysis result
-        const finalLevel = extractedLevel || cefrAnalysisResult.level;
+        // Use extracted level if available, otherwise use analysis result, otherwise preserve original
+        const finalLevel = extractedLevel || cefrAnalysisResult.level || originalLevel;
         
         // Update analysis result with extracted level info
         cefrAnalysisResult.extractedLevel = extractedLevel;
@@ -483,13 +499,17 @@ export class LanguageService {
         session.vocabulary = cefrAnalysisResult.feedback.vocabulary as any;
         session.fluency = cefrAnalysisResult.feedback.fluency as any;
 
-        this.logger.log(`CEFR analysis completed. Final level: ${finalLevel} (extracted: ${extractedLevel}, analyzed: ${cefrAnalysisResult.level})`);
+        this.logger.log(`CEFR analysis completed. Final level: ${finalLevel} (extracted: ${extractedLevel}, analyzed: ${cefrAnalysisResult.level}, original: ${originalLevel})`);
       } catch (error) {
         this.logger.error('Error during CEFR analysis:', error);
         // Keep original session data if analysis fails, but still use extracted level if available
         if (extractedLevel) {
           session.level = extractedLevel;
           this.logger.log(`Using extracted level ${extractedLevel} despite analysis failure`);
+        } else {
+          // Preserve the original level from DTO
+          session.level = originalLevel;
+          this.logger.log(`Preserving original level ${originalLevel} due to analysis failure`);
         }
       }
     } else if (messages.length > 0) {
@@ -515,6 +535,8 @@ export class LanguageService {
           analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
           this.applyPracticeFeedback(session, dto, analytics.feedback);
         }
+        // Preserve original level for practice sessions
+        session.level = originalLevel;
       }
     } else {
       // No conversation data available, use DTO feedback if provided
@@ -522,7 +544,7 @@ export class LanguageService {
         analytics = this.analyticsService.analyzeCompletion(dto, extractedLevel);
         this.applyPracticeFeedback(session, dto, analytics.feedback);
       }
-      session.level = extractedLevel || dto.level || session.level;
+      session.level = extractedLevel || originalLevel;
     }
 
     // Create analytics for completion event (use default if CEFR test)
@@ -590,7 +612,7 @@ export class LanguageService {
     }
 
     // Update user's current level and save test result if it's a CEFR test
-    const finalLevel = extractedLevel || cefrAnalysisResult?.level || session.level;
+    const finalLevel = extractedLevel || cefrAnalysisResult?.level || originalLevel;
     
     if (isCefrTest && cefrAnalysisResult) {
       // Save as official language test result
@@ -612,7 +634,7 @@ export class LanguageService {
         metadata: {
           aiModel: 'gpt-4o-realtime',
           durationSeconds: session.durationSeconds,
-          notes: `CEFR evaluation completed. Extracted level: ${extractedLevel || 'N/A'}, Analyzed level: ${cefrAnalysisResult.level}`,
+          notes: `CEFR evaluation completed. Extracted level: ${extractedLevel || 'N/A'}, Analyzed level: ${cefrAnalysisResult.level}, Original level: ${originalLevel}`,
           attachments: [], // Could add audio/transcript URLs here if needed
         },
       };

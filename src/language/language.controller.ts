@@ -40,7 +40,7 @@ export class LanguageController {
     return this.languageService.startPracticeSession(userId, dto);
   }
 
-  @Post('users/:userId/practice-sessions/:sessionId/complete')
+  @Patch('users/:userId/practice-sessions/:sessionId/complete')
   completePracticeSession(
     @Param('userId') userId: string,
     @Param('sessionId') sessionId: string,
