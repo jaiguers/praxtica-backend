@@ -644,6 +644,8 @@ export class LanguageService {
       
       this.logger.log(`💾 Saved CEFR test result: ${finalLevel} for ${dto.language}`);
     }
+
+    user.practiceSessions.push(session);
     
     this.upsertCurrentLevel(
       user,
