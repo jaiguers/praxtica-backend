@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OpenAIModule } from '../openai/openai.module';
+import { LiveKitModule } from '../livekit/livekit.module';
 import { User, UserSchema } from '../auth/user.model';
 import { LanguageController } from './language.controller';
-import { LanguageGateway } from './language.gateway';
-import { RealtimePracticeGateway } from './realtime-practice.gateway';
+// Removed WebSocket gateways
 import { LanguageService } from './language.service';
 import { LanguageAnalyticsService } from './language-analytics.service';
 import { RedisStorageService } from './redis-storage.service';
@@ -16,12 +16,11 @@ import { MigrationService } from './migration.service';
   imports: [
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     OpenAIModule,
+    LiveKitModule,
   ],
   controllers: [LanguageController],
   providers: [
     LanguageService,
-    LanguageGateway,
-    RealtimePracticeGateway,
     LanguageAnalyticsService,
     RedisStorageService,
     CefrAnalysisService,
@@ -30,5 +29,5 @@ import { MigrationService } from './migration.service';
   ],
   exports: [LanguageService],
 })
-export class LanguageModule {}
+export class LanguageModule { }
 

@@ -48,5 +48,9 @@ export class StartPracticeSessionDto {
   @IsOptional()
   @IsBoolean()
   captureAudio?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isTest?: boolean;
 }
 

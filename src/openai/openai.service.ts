@@ -56,7 +56,7 @@ export interface CefrPlacementTest {
 @Injectable()
 export class OpenAIService {
   private readonly logger = new Logger(OpenAIService.name);
-  private readonly openai: OpenAI;
+  public readonly openai: OpenAI;
   private readonly grammarModel =
     process.env.OPENAI_GRAMMAR_MODEL ?? 'gpt-4o-mini';
   private readonly placementModel =

@@ -8,6 +8,7 @@ import { PingModule } from './ping/ping.module';
 import { PlansModule } from './plans/plans.module';
 import { PaymentsModule } from './payments/payments.module';
 import { LanguageModule } from './language/language.module';
+import { LiveKitModule } from './livekit/livekit.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { LanguageModule } from './language/language.module';
     PlansModule,
     PaymentsModule,
     LanguageModule,
+    LiveKitModule,
   ],
 })
-export class AppModule {} 
+export class AppModule { } 

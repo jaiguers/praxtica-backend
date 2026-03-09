@@ -73,10 +73,10 @@ export class RedisStorageService {
     };
 
     const key = this.getUserAudioKey(sessionId);
-    
+
     const result = await this.redis.lpush(key, JSON.stringify(audioSegment));
     await this.redis.expire(key, this.sessionTTL);
-    
+
   }
 
   /**
@@ -119,7 +119,7 @@ export class RedisStorageService {
     const key = this.getSessionKey(sessionId);
     await this.redis.lpush(key, JSON.stringify(message));
     await this.redis.expire(key, this.sessionTTL);
-    
+
     this.logger.log(`🤖 Assistant: "${text.substring(0, 50)}..."`);
   }
 
@@ -129,7 +129,7 @@ export class RedisStorageService {
   async getSessionMessages(sessionId: string): Promise<StoredMessage[]> {
     const key = this.getSessionKey(sessionId);
     const messages = await this.redis.lrange(key, 0, -1);
-    
+
     const parsedMessages = messages
       .map(msg => {
         try {
@@ -152,7 +152,7 @@ export class RedisStorageService {
   async getUserAudioSegments(sessionId: string): Promise<StoredAudioSegment[]> {
     const key = this.getUserAudioKey(sessionId);
     const audioSegments = await this.redis.lrange(key, 0, -1);
-    
+
     const parsedSegments = audioSegments
       .map(segment => {
         try {
@@ -175,10 +175,10 @@ export class RedisStorageService {
   async deleteSession(sessionId: string): Promise<void> {
     const messageKey = this.getSessionKey(sessionId);
     const audioKey = this.getUserAudioKey(sessionId);
-    
+
     const deletedMessages = await this.redis.del(messageKey);
     const deletedAudio = await this.redis.del(audioKey);
-    
+
     if (deletedMessages > 0 || deletedAudio > 0) {
       this.logger.log(`Session ${sessionId} deleted from Redis (messages: ${deletedMessages}, audio: ${deletedAudio})`);
     } else {
@@ -200,12 +200,12 @@ export class RedisStorageService {
   async debugSession(sessionId: string): Promise<void> {
     const messageKey = this.getSessionKey(sessionId);
     const audioKey = this.getUserAudioKey(sessionId);
-    
+
     const messageCount = await this.redis.llen(messageKey);
     const audioCount = await this.redis.llen(audioKey);
-    
+
     this.logger.log(`🔍 DEBUG Session ${sessionId}: ${messageCount} messages, ${audioCount} audio segments`);
-    
+
     if (audioCount > 0) {
       const firstAudio = await this.redis.lindex(audioKey, 0);
       const lastAudio = await this.redis.lindex(audioKey, -1);

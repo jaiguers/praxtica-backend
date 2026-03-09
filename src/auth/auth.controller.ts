@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards, Req, Body, Res } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Req, Body, Res, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './jwt.guard';
 import { AuthService } from './auth.service';
@@ -18,7 +18,28 @@ export class AuthController {
   @Get('verify')
   @UseGuards(JwtAuthGuard)
   async verifyToken(@Req() req) {
-    return req.user;
+    // Get full user data from database including languageTests
+    const user = await this.authService.findUserById(req.user.sub);
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    // Convert languageTests Map to object for JSON serialization
+    const languageTests = user.languageTests ? 
+      Object.fromEntries(user.languageTests) : {};
+
+    return {
+      id: user._id.toString(),
+      username: user.username,
+      name: user.name,
+      email: user.email,
+      ranking: user.ranking,
+      avatarUrl: user.avatarUrl,
+      subscription: user.subscription,
+      challengeProgress: user.challengeProgress,
+      languageTests,
+      practiceSessions: user.practiceSessions || [],
+    };
   }
 
   @Post('github')

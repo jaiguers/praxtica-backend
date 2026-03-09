@@ -87,6 +87,10 @@ export class AuthService {
   async login(user: UserDocument) {
     const token = await this.generateToken(user);
 
+    // Convert languageTests Map to object for JSON serialization
+    const languageTests = user.languageTests ? 
+      Object.fromEntries(user.languageTests) : {};
+
     return {
       user: {
         id: user._id.toString(),
@@ -97,6 +101,8 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
         subscription: user.subscription,
         challengeProgress: user.challengeProgress,
+        languageTests,
+        practiceSessions: user.practiceSessions || [],
       },
       token,
     };

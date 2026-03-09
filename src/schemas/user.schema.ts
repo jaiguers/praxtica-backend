@@ -83,12 +83,11 @@ export class FluencyFeedback {
 
   @Prop({
     type: {
-      min: { type: Number, required: true },
-      max: { type: Number, required: true },
+      min: { type: Number },
+      max: { type: Number },
     },
-    required: true,
   })
-  nativeRange: { min: number; max: number };
+  nativeRange?: { min: number; max: number };
 
   @Prop({ min: 0, required: true })
   pausesPerMinute: number;
@@ -187,8 +186,8 @@ export class PracticeSession {
   @Prop({ required: true, enum: LANGUAGES })
   language: Language;
 
-  @Prop({ required: true, enum: CEFR_LEVELS })
-  level: CefrLevel;
+  @Prop({ required: false, enum: CEFR_LEVELS })
+  level?: CefrLevel;
 
   @Prop({ min: 0, default: 0 })
   durationSeconds: number;

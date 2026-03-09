@@ -24,80 +24,67 @@ import {
   PracticeAnalyticsResult,
   PracticeFeedbackAggregate,
 } from './language-analytics.service';
-import type { LanguageGateway } from './language.gateway';
-import {
-  ConversationItem,
-  OpenAIRealtimeService,
-} from '../openai/openai-realtime.service';
+import { OpenAIRealtimeService } from '../openai/openai-realtime.service';
+import { LiveKitAgentService } from '../livekit/livekit-agent.service';
 import { RedisStorageService } from './redis-storage.service';
 import { CefrAnalysisService } from './cefr-analysis.service';
 import { WhisperTranscriptionService } from './whisper-transcription.service';
+import { OpenAIService } from '../openai/openai.service';
 
 export type RealtimeEvent =
   | {
-      type: 'session.started';
-      payload: { sessionId: string; userId: string; language: Language };
-      timestamp: number;
-    }
+    type: 'session.started';
+    payload: { sessionId: string; userId: string; language: Language };
+    timestamp: number;
+  }
   | {
-      type: 'session.event';
-      payload: {
-        sessionId: string;
-        role: 'user' | 'assistant';
-        text: string;
-        isFinal?: boolean;
-        timestamp: number;
-      };
-      timestamp: number;
-    }
-  | {
-      type: 'assistant.message';
-      payload: {
-        sessionId: string;
-        text: string;
-        delta?: string;
-        isFinal?: boolean;
-        audioUrl?: string;
-        metadata?: Record<string, unknown>;
-      };
-      timestamp: number;
-    }
-  | {
-      type: 'session.completed';
-      payload: PracticeAnalyticsResult['metrics'];
+    type: 'session.event';
+    payload: {
+      sessionId: string;
+      role: 'user' | 'assistant';
+      text: string;
+      isFinal?: boolean;
       timestamp: number;
     };
+    timestamp: number;
+  }
+  | {
+    type: 'assistant.message';
+    payload: {
+      sessionId: string;
+      text: string;
+      delta?: string;
+      isFinal?: boolean;
+      audioUrl?: string;
+      metadata?: Record<string, unknown>;
+    };
+    timestamp: number;
+  }
+  | {
+    type: 'session.completed';
+    payload: PracticeAnalyticsResult['metrics'];
+    timestamp: number;
+  };
 
 @Injectable()
 export class LanguageService {
   private readonly logger = new Logger(LanguageService.name);
   private readonly sessionStreams = new Map<string, Subject<MessageEvent>>();
-  private gateway?: LanguageGateway;
-  private readonly conversationStates = new Map<
-    string,
-    {
-      userId: string;
-      language: Language;
-      level: CefrLevel;
-      messages: ConversationItem[];
-      voice?: string;
-      processing: boolean;
-    }
-  >();
+  // Removed gateway reference
+  // Removed conversationStates
 
   constructor(
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly analyticsService: LanguageAnalyticsService,
-    private readonly realtimeService: OpenAIRealtimeService,
     private readonly redisStorage: RedisStorageService,
     private readonly cefrAnalysis: CefrAnalysisService,
-    private readonly whisperService: WhisperTranscriptionService,
-  ) {}
+    private readonly openAIService: OpenAIService,
+    private readonly realtimeService: OpenAIRealtimeService,
+    private readonly livekitAgentService: LiveKitAgentService,
+  ) { }
 
-  registerGateway(gateway: LanguageGateway): void {
-    this.gateway = gateway;
-  }
+  // Removed registerGateway
 
   async createLanguageTest(
     userId: string,
@@ -124,15 +111,15 @@ export class LanguageService {
 
     const metadata = dto.metadata
       ? {
-          promptSeed: dto.metadata.promptSeed,
-          aiModel: dto.metadata.aiModel,
-          durationSeconds: dto.metadata.durationSeconds,
-          notes: dto.metadata.notes,
-          attachments: dto.metadata.attachments?.map((item) => ({
-            url: item.url,
-            kind: item.kind,
-          })),
-        }
+        promptSeed: dto.metadata.promptSeed,
+        aiModel: dto.metadata.aiModel,
+        durationSeconds: dto.metadata.durationSeconds,
+        notes: dto.metadata.notes,
+        attachments: dto.metadata.attachments?.map((item) => ({
+          url: item.url,
+          kind: item.kind,
+        })),
+      }
       : undefined;
 
     const languageTest: LanguageTest = {
@@ -193,19 +180,8 @@ export class LanguageService {
 
     const sessionKey = sessionId.toString();
 
-    this.conversationStates.set(sessionKey, {
-      userId,
-      language: dto.language,
-      level: dto.level,
-      voice: dto.aiPersona,
-      processing: false,
-      messages: [
-        {
-          role: 'system',
-          content: this.buildSystemPrompt(dto.language, dto.level, dto),
-        },
-      ],
-    });
+    // Initialize Redis session for conversation storage
+    await this.redisStorage.initializeSession(sessionKey);
 
     const payload: RealtimeEvent = {
       type: 'session.started',
@@ -217,158 +193,92 @@ export class LanguageService {
       timestamp: Date.now(),
     };
 
+    // Crear sesión de OpenAI Realtime para que la IA inicie la conversación
+    try {
+      await this.realtimeService.createSession({
+        sessionId: sessionKey,
+        userId,
+        language: dto.language,
+        level: dto.level,
+        mode: dto.isTest ? 'test' : 'practice',
+      });
+
+      // 1. Obtener el EventEmitter de la sesión para escuchar a María
+      const eventEmitter = this.realtimeService.getEventEmitter(sessionKey);
+
+      if (eventEmitter) {
+        // Escuchar cuando María empieza a responder
+        eventEmitter.on('assistant.response.created', () => {
+          this.logger.log(`📢 Maria [${sessionKey}] is starting to respond...`);
+        });
+
+        // Escuchar transcripciones de María
+        eventEmitter.on('assistant.transcript.delta', (event) => {
+          this.emitRealtimeEvent(sessionKey, {
+            type: 'assistant.message',
+            payload: {
+              sessionId: sessionKey,
+              text: event.delta,
+              delta: event.delta,
+              isFinal: false,
+            },
+            timestamp: Date.now(),
+          });
+        });
+
+        // Escuchar cuando María termina de hablar (transcripción completa)
+        eventEmitter.on('assistant.transcript.done', (event) => {
+          this.logger.log(`✅ Maria [${sessionKey}]: ${event.transcript}`);
+          this.emitRealtimeEvent(sessionKey, {
+            type: 'assistant.message',
+            payload: {
+              sessionId: sessionKey,
+              text: event.transcript,
+              isFinal: true,
+            },
+            timestamp: Date.now(),
+          });
+          // Guardar en Redis para el análisis final
+          this.storeAssistantResponse(sessionKey, event.transcript, '', Date.now());
+        });
+
+        // Escuchar audio (Delta) - Esto es lo que el front debería reproducir
+        eventEmitter.on('assistant.audio.delta', (event) => {
+          // Si usas el stream de SSE para el audio, lo enviamos aquí
+          this.emitRealtimeEvent(sessionKey, {
+            type: 'assistant.message',
+            payload: {
+              sessionId: sessionKey,
+              text: '',
+              audioUrl: `data:audio/pcm;base64,${event.delta}`, // O el formato que use tu front
+            } as any,
+            timestamp: Date.now(),
+          });
+        });
+
+        // Manejar errores
+        eventEmitter.on('error', (error) => {
+          this.logger.error(`❌ OpenAI Realtime Error [${sessionKey}]:`, error);
+        });
+      }
+
+      this.logger.log(`🤖 OpenAI Realtime session created for ${sessionKey}`);
+
+      // 2. Unir a María (Agente) al cuarto de LiveKit
+      try {
+        await this.livekitAgentService.joinRoomAsAgent(sessionKey, userId);
+      } catch (agentError) {
+        this.logger.error(`Error joining LiveKit room as agent: ${agentError.message}`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to create OpenAI Realtime session: ${error.message}`);
+    }
+
     this.emitRealtimeEvent(sessionKey, payload);
     return session;
   }
 
-  async handleUserTranscript(
-    userId: string,
-    sessionId: string,
-    text: string,
-    isFinal?: boolean,
-    timestamp?: number,
-  ): Promise<void> {
-    const state = this.conversationStates.get(sessionId);
-    if (!state) {
-      this.logger.warn(
-        `No se encontró estado conversacional para la sesión ${sessionId}`,
-      );
-      return;
-    }
-
-    if (state.userId !== userId) {
-      this.logger.warn(
-        `Usuario ${userId} intentó publicar en sesión ${sessionId} que pertenece a ${state.userId}`,
-      );
-      return;
-    }
-
-    if (state.processing) {
-      this.logger.warn(
-        `Sesión ${sessionId} aún procesando respuesta anterior, ignorando nueva transcripción`,
-      );
-      return;
-    }
-
-    state.messages.push({
-      role: 'user',
-      content: text,
-    });
-
-    this.emitRealtimeEvent(sessionId, {
-      type: 'session.event',
-      payload: {
-        sessionId,
-        role: 'user',
-        text,
-        isFinal,
-        timestamp: timestamp ?? Date.now(),
-      },
-      timestamp: Date.now(),
-    });
-
-    state.processing = true;
-    const audioChunks: string[] = [];
-    let assistantText = '';
-
-    try {
-      const stream = await this.realtimeService.streamResponse(state.messages, {
-        language: state.language,
-        voice: state.voice,
-      });
-
-      for await (const event of stream) {
-        switch (event.type) {
-          case 'response.output_text.delta': {
-            const delta = String(event.delta ?? '');
-            if (delta.length === 0) break;
-            assistantText += delta;
-            this.emitRealtimeEvent(sessionId, {
-              type: 'assistant.message',
-              payload: {
-                sessionId,
-                text: assistantText,
-                delta,
-                isFinal: false,
-              },
-              timestamp: Date.now(),
-            });
-            break;
-          }
-          case 'response.audio.delta': {
-            const chunk = String(event.delta ?? '');
-            if (chunk) {
-              audioChunks.push(chunk);
-            }
-            break;
-          }
-          case 'response.error': {
-            this.logger.error(
-              `Error de stream OpenAI en sesión ${sessionId}: ${JSON.stringify(
-                event,
-              )}`,
-            );
-            break;
-          }
-          default:
-            break;
-        }
-      }
-
-      if (typeof (stream as any).finalResponse === 'function') {
-        try {
-          await (stream as any).finalResponse();
-        } catch (error) {
-          this.logger.warn(
-            `No se pudo obtener finalResponse para sesión ${sessionId}`,
-            error as Error,
-          );
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `Error generando respuesta para sesión ${sessionId}`,
-        error as Error,
-      );
-      this.emitRealtimeEvent(sessionId, {
-        type: 'assistant.message',
-        payload: {
-          sessionId,
-          text: 'Lo siento, hubo un problema generando la respuesta.',
-          isFinal: true,
-        },
-        timestamp: Date.now(),
-      });
-      state.processing = false;
-      return;
-    }
-
-    const finalText = assistantText.trim();
-    if (finalText.length > 0) {
-      state.messages.push({
-        role: 'assistant',
-        content: finalText,
-      });
-    }
-
-    const audioUrl =
-      audioChunks.length > 0
-        ? `data:audio/mp3;base64,${audioChunks.join('')}`
-        : undefined;
-
-    this.emitRealtimeEvent(sessionId, {
-      type: 'assistant.message',
-      payload: {
-        sessionId,
-        text: finalText,
-        audioUrl,
-        isFinal: true,
-      },
-      timestamp: Date.now(),
-    });
-
-    state.processing = false;
-  }
+  // Removed handleUserTranscript as it was using the legacy WebSocket-based streamResponse
 
   async completePracticeSession(
     userId: string,
@@ -387,21 +297,21 @@ export class LanguageService {
     // If session doesn't exist, create it (for cases where frontend creates sessionId)
     if (!session) {
       this.logger.log(`Session ${sessionId} not found, creating new session for completion`);
-      
+
       const feedback = this.analyticsService.createInitialFeedback(dto.language, dto.level || 'A1');
-      
+
       // Calculate proper start time - ensure it's a valid date
       const endTime = new Date(dto.endedAt);
       const durationMs = (dto.durationSeconds || 0) * 1000;
       const startTime = new Date(endTime.getTime() - durationMs);
-      
+
       // Validate the calculated start time - if it's invalid, use a reasonable default
-      const validStartTime = isNaN(startTime.getTime()) || startTime.getTime() < 0 
+      const validStartTime = isNaN(startTime.getTime()) || startTime.getTime() < 0
         ? new Date(endTime.getTime() - 300000) // Default to 5 minutes before end time
         : startTime;
-      
+
       this.logger.log(`Creating session with startedAt: ${validStartTime.toISOString()}, endedAt: ${endTime.toISOString()}, duration: ${dto.durationSeconds}s`);
-      
+
       session = {
         _id: sessionId as any,
         startedAt: validStartTime,
@@ -435,7 +345,7 @@ export class LanguageService {
 
     // Determine if this is a CEFR test based on sessionId or mode
     const isCefrTest = sessionId.includes('cefr-test') || sessionId.includes('test');
-    
+
     // Generate appropriate title (will be set later after we have messages)
     let conversationTitle = '';
 
@@ -456,7 +366,7 @@ export class LanguageService {
     let cefrAnalysisResult: any;
     let analytics: PracticeAnalyticsResult;
     let extractedLevel: CefrLevel | null = null;
-    
+
     // Check if any assistant messages contain CEFR level evaluation
     const assistantMessages = messages.filter(msg => msg.role === 'assistant');
     for (const message of assistantMessages) {
@@ -467,15 +377,15 @@ export class LanguageService {
         break;
       }
     }
-    
+
     if (isCefrTest && messages.length > 0) {
-      
+
       // Extract user audio chunks for analysis (now from transcribed messages)
       const userAudioChunks = messages
         .filter(msg => msg.role === 'user' && msg.audioBase64)
         .map(msg => msg.audioBase64)
         .filter(audio => audio && audio.length > 0);
-      
+
       this.logger.log(`📊 Extracted ${userAudioChunks.length} user audio chunks for analysis (total size: ${userAudioChunks.join('').length} base64 chars)`);
 
       try {
@@ -487,7 +397,7 @@ export class LanguageService {
 
         // Use extracted level if available, otherwise use analysis result, otherwise preserve original
         const finalLevel = extractedLevel || cefrAnalysisResult.level || originalLevel;
-        
+
         // Update analysis result with extracted level info
         cefrAnalysisResult.extractedLevel = extractedLevel;
         cefrAnalysisResult.audioSuppressed = !!extractedLevel; // Audio was suppressed if we found evaluation
@@ -580,7 +490,7 @@ export class LanguageService {
 
     // Save conversation history
     this.logger.log(`💾 Saving conversation history with ${messages.length} messages`);
-    
+
     // Filter out empty messages for cleaner storage
     const validMessages = messages.filter(msg => msg.text && msg.text.trim().length > 0);
 
@@ -590,7 +500,7 @@ export class LanguageService {
 
     if (validMessages.length > 0) {
       session.conversationLog = {
-        title: conversationTitle || (isCefrTest 
+        title: conversationTitle || (isCefrTest
           ? (dto.language === 'english' ? 'Placement Test' : 'Examen de Nivelación')
           : (dto.language === 'english' ? 'Practice Session' : 'Sesión de Práctica')),
         transcript: validMessages.map(msg => ({
@@ -603,7 +513,7 @@ export class LanguageService {
     } else {
       // Even if no messages, set the title
       session.conversationLog = {
-        title: conversationTitle || (isCefrTest 
+        title: conversationTitle || (isCefrTest
           ? (dto.language === 'english' ? 'Placement Test' : 'Examen de Nivelación')
           : (dto.language === 'english' ? 'Practice Session' : 'Sesión de Práctica')),
         transcript: [],
@@ -613,7 +523,7 @@ export class LanguageService {
 
     // Update user's current level and save test result if it's a CEFR test
     const finalLevel = extractedLevel || cefrAnalysisResult?.level || originalLevel;
-    
+
     if (isCefrTest && cefrAnalysisResult) {
       // Save as official language test result
       if (!user.languageTests) {
@@ -641,12 +551,12 @@ export class LanguageService {
 
       user.languageTests.set(dto.language, languageTest as any);
       user.markModified('languageTests');
-      
+
       this.logger.log(`💾 Saved CEFR test result: ${finalLevel} for ${dto.language}`);
     }
 
-    user.practiceSessions.push(session);
-    
+
+
     this.upsertCurrentLevel(
       user,
       dto.language,
@@ -666,7 +576,7 @@ export class LanguageService {
 
     this.emitRealtimeEvent(sessionId, completionEvent);
     this.completeRealtimeStream(sessionId);
-    this.conversationStates.delete(sessionId);
+    // Removed conversationStates delete
 
     // Clean up Redis session
     try {
@@ -690,7 +600,7 @@ export class LanguageService {
       data: event,
     };
     stream.next(messageEvent);
-    this.gateway?.dispatchSessionEvent(sessionId, event);
+    // Removed gateway emit
   }
 
   completeRealtimeStream(sessionId: string): void {
@@ -762,15 +672,15 @@ export class LanguageService {
       dto.topics && dto.topics.length > 0
         ? dto.topics.join(', ')
         : language === 'english'
-        ? 'daily life, work and technology'
-        : 'situaciones cotidianas, trabajo y tecnología';
+          ? 'daily life, work and technology'
+          : 'situaciones cotidianas, trabajo y tecnología';
     const goal = dto.goal
       ? (language === 'english'
-          ? `Specific goal: ${dto.goal}.`
-          : `Objetivo específico: ${dto.goal}.`)
+        ? `Specific goal: ${dto.goal}.`
+        : `Objetivo específico: ${dto.goal}.`)
       : language === 'english'
-      ? 'Keep the dialogue flowing naturally.'
-      : 'Mantén la conversación fluida y natural.';
+        ? 'Keep the dialogue flowing naturally.'
+        : 'Mantén la conversación fluida y natural.';
 
     if (language === 'english') {
       return [
@@ -844,15 +754,15 @@ export class LanguageService {
    * Generate conversation title based on language and mode
    */
   private async generateConversationTitle(
-    language: Language, 
-    isCefrTest: boolean, 
-    messages?: any[], 
+    language: Language,
+    isCefrTest: boolean,
+    messages?: any[],
     userId?: string
   ): Promise<string> {
     if (isCefrTest) {
       return language === 'english' ? 'Placement Test' : 'Examen de Nivelación';
     }
-    
+
     // For practice sessions, try to generate AI title first
     if (messages && messages.length > 2) {
       try {
@@ -864,15 +774,15 @@ export class LanguageService {
         this.logger.warn('Failed to generate AI title, using fallback', error);
       }
     }
-    
+
     // Fallback: Use numbered practice sessions
     if (userId) {
       const practiceNumber = await this.getNextPracticeNumber(userId, language);
-      return language === 'english' 
-        ? `Practice #${practiceNumber}` 
+      return language === 'english'
+        ? `Practice #${practiceNumber}`
         : `Práctica #${practiceNumber}`;
     }
-    
+
     // Final fallback
     return language === 'english' ? 'Practice Session' : 'Sesión de Práctica';
   }
@@ -893,11 +803,11 @@ export class LanguageService {
         return null; // Not enough content for meaningful title
       }
 
-      const prompt = language === 'english' 
+      const prompt = language === 'english'
         ? `Based on this conversation excerpt, create a short, descriptive title (max 4 words) that captures the main topic discussed: "${userMessages}". Respond with just the title, no quotes or extra text.`
         : `Basándote en este fragmento de conversación, crea un título corto y descriptivo (máximo 4 palabras) que capture el tema principal discutido: "${userMessages}". Responde solo con el título, sin comillas ni texto extra.`;
 
-      const response = await this.realtimeService['openai'].chat.completions.create({
+      const response = await this.openAIService.openai.chat.completions.create({
         model: 'gpt-4o-mini', // Use faster model for title generation
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
@@ -905,12 +815,12 @@ export class LanguageService {
       });
 
       const title = response.choices[0]?.message?.content?.trim();
-      
+
       // Validate title (reasonable length, no weird characters)
       if (title && title.length <= 50 && title.length >= 3 && !/[<>{}[\]]/g.test(title)) {
         return title;
       }
-      
+
       return null;
     } catch (error) {
       this.logger.warn('Error generating AI title:', error);
@@ -929,9 +839,9 @@ export class LanguageService {
       }
 
       // Count existing practice sessions for this language (excluding tests)
-      const practiceCount = user.practiceSessions.filter(session => 
-        session.language === language && 
-        session.conversationLog?.title && 
+      const practiceCount = user.practiceSessions.filter(session =>
+        session.language === language &&
+        session.conversationLog?.title &&
         !session.conversationLog.title.toLowerCase().includes('test') &&
         !session.conversationLog.title.toLowerCase().includes('examen')
       ).length;

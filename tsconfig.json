@@ -6,7 +6,11 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "target": "es2017",
+    "target": "es2021",
+    "lib": [
+      "es2021",
+      "dom"
+    ],
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
@@ -17,6 +21,9 @@
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
-    "typeRoots": ["./node_modules/@types", "./@types"]
+    "typeRoots": [
+      "./node_modules/@types",
+      "./@types"
+    ]
   }
-} 
+}
