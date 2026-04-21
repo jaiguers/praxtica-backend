@@ -1,0 +1,24 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AuthProviderDataSchema = exports.AuthProviderData = exports.FluencyFeedbackSchema = exports.FluencyFeedback = exports.VocabularyFeedbackSchema = exports.VocabularyFeedback = exports.GrammarFeedbackSchema = exports.GrammarFeedback = exports.PronunciationFeedbackSchema = exports.PronunciationFeedback = exports.PracticeSessionSchema = exports.PracticeSession = exports.LanguageTestSchema = exports.LanguageTest = exports.AUTH_PROVIDERS = exports.CEFR_LEVELS = exports.LANGUAGES = exports.UserSchema = exports.User = void 0;
+var user_schema_1 = require("../schemas/user.schema");
+Object.defineProperty(exports, "User", { enumerable: true, get: function () { return user_schema_1.User; } });
+Object.defineProperty(exports, "UserSchema", { enumerable: true, get: function () { return user_schema_1.UserSchema; } });
+Object.defineProperty(exports, "LANGUAGES", { enumerable: true, get: function () { return user_schema_1.LANGUAGES; } });
+Object.defineProperty(exports, "CEFR_LEVELS", { enumerable: true, get: function () { return user_schema_1.CEFR_LEVELS; } });
+Object.defineProperty(exports, "AUTH_PROVIDERS", { enumerable: true, get: function () { return user_schema_1.AUTH_PROVIDERS; } });
+Object.defineProperty(exports, "LanguageTest", { enumerable: true, get: function () { return user_schema_1.LanguageTest; } });
+Object.defineProperty(exports, "LanguageTestSchema", { enumerable: true, get: function () { return user_schema_1.LanguageTestSchema; } });
+Object.defineProperty(exports, "PracticeSession", { enumerable: true, get: function () { return user_schema_1.PracticeSession; } });
+Object.defineProperty(exports, "PracticeSessionSchema", { enumerable: true, get: function () { return user_schema_1.PracticeSessionSchema; } });
+Object.defineProperty(exports, "PronunciationFeedback", { enumerable: true, get: function () { return user_schema_1.PronunciationFeedback; } });
+Object.defineProperty(exports, "PronunciationFeedbackSchema", { enumerable: true, get: function () { return user_schema_1.PronunciationFeedbackSchema; } });
+Object.defineProperty(exports, "GrammarFeedback", { enumerable: true, get: function () { return user_schema_1.GrammarFeedback; } });
+Object.defineProperty(exports, "GrammarFeedbackSchema", { enumerable: true, get: function () { return user_schema_1.GrammarFeedbackSchema; } });
+Object.defineProperty(exports, "VocabularyFeedback", { enumerable: true, get: function () { return user_schema_1.VocabularyFeedback; } });
+Object.defineProperty(exports, "VocabularyFeedbackSchema", { enumerable: true, get: function () { return user_schema_1.VocabularyFeedbackSchema; } });
+Object.defineProperty(exports, "FluencyFeedback", { enumerable: true, get: function () { return user_schema_1.FluencyFeedback; } });
+Object.defineProperty(exports, "FluencyFeedbackSchema", { enumerable: true, get: function () { return user_schema_1.FluencyFeedbackSchema; } });
+Object.defineProperty(exports, "AuthProviderData", { enumerable: true, get: function () { return user_schema_1.AuthProviderData; } });
+Object.defineProperty(exports, "AuthProviderDataSchema", { enumerable: true, get: function () { return user_schema_1.AuthProviderDataSchema; } });
+//# sourceMappingURL=user.model.js.map

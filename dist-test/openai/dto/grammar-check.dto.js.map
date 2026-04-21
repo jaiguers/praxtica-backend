@@ -1,0 +1,1 @@
+{"version":3,"file":"grammar-check.dto.js","sourceRoot":"","sources":["../../../src/openai/dto/grammar-check.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,qDAA6D;AAG7D,MAAa,eAAe;CAU3B;AAVD,0CAUC;AARC;IADC,IAAA,0BAAQ,GAAE;;6CACE;AAGb;IADC,IAAA,sBAAI,EAAC,CAAC,SAAS,EAAE,SAAS,CAAC,CAAC;;iDACE;AAI/B;IAFC,IAAA,4BAAU,GAAE;IACZ,IAAA,0BAAQ,GAAE;;oDACU"}

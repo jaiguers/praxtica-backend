@@ -259,6 +259,25 @@ export class LanguageService {
         // Manejar errores
         eventEmitter.on('error', (error) => {
           this.logger.error(`❌ OpenAI Realtime Error [${sessionKey}]:`, error);
+
+          const errorCode = (error as any)?.error?.code;
+          const errorMessage = (error as any)?.error?.message || 'OpenAI realtime request failed.';
+
+          this.emitRealtimeEvent(sessionKey, {
+            type: 'assistant.message',
+            payload: {
+              sessionId: sessionKey,
+              text: '',
+              isFinal: true,
+              metadata: {
+                provider: 'openai-realtime',
+                status: 'error',
+                code: errorCode,
+                message: errorMessage,
+              },
+            },
+            timestamp: Date.now(),
+          });
         });
       }
 

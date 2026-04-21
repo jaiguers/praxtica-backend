@@ -152,15 +152,20 @@ export class LanguageAnalyticsService {
   private normalizeFeedback(
     dto: CompletePracticeSessionDto,
   ): PracticeFeedbackAggregate {
-    // Add safety check for feedback existence
     if (!dto.feedback) {
       throw new Error('Feedback is required for normalizeFeedback method');
     }
-    
+
+    const fallback = this.createInitialFeedback(dto.language, dto.level || 'A1');
+    const pronunciation = dto.feedback.pronunciation;
+    const grammar = dto.feedback.grammar;
+    const vocabulary = dto.feedback.vocabulary;
+    const fluency = dto.feedback.fluency;
+
     return {
       pronunciation: {
-        score: dto.feedback.pronunciation.score,
-        mispronouncedWords: dto.feedback.pronunciation.mispronouncedWords.map(
+        score: pronunciation?.score ?? fallback.pronunciation.score,
+        mispronouncedWords: (pronunciation?.mispronouncedWords ?? []).map(
           (word) => ({
             ...word,
             lastHeard: new Date(word.lastHeard),
@@ -168,26 +173,26 @@ export class LanguageAnalyticsService {
         ),
       },
       grammar: {
-        score: dto.feedback.grammar.score,
-        errors: dto.feedback.grammar.errors.map((error) => ({ ...error })),
+        score: grammar?.score ?? fallback.grammar.score,
+        errors: (grammar?.errors ?? []).map((error) => ({ ...error })),
       },
       vocabulary: {
-        score: dto.feedback.vocabulary.score,
-        rareWordsUsed: dto.feedback.vocabulary.rareWordsUsed ?? [],
-        repeatedWords: dto.feedback.vocabulary.repeatedWords ?? [],
-        suggestedWords: dto.feedback.vocabulary.suggestedWords ?? [],
+        score: vocabulary?.score ?? fallback.vocabulary.score,
+        rareWordsUsed: vocabulary?.rareWordsUsed ?? [],
+        repeatedWords: vocabulary?.repeatedWords ?? [],
+        suggestedWords: vocabulary?.suggestedWords ?? [],
       },
       fluency: {
-        score: dto.feedback.fluency.score,
-        wordsPerMinute: dto.feedback.fluency.wordsPerMinute,
+        score: fluency?.score ?? fallback.fluency.score,
+        wordsPerMinute: fluency?.wordsPerMinute ?? fallback.fluency.wordsPerMinute,
         nativeRange: {
-          min: dto.feedback.fluency.nativeRange.min,
-          max: dto.feedback.fluency.nativeRange.max,
+          min: fluency?.nativeRange?.min ?? fallback.fluency.nativeRange.min,
+          max: fluency?.nativeRange?.max ?? fallback.fluency.nativeRange.max,
         },
-        pausesPerMinute: dto.feedback.fluency.pausesPerMinute,
-        fillerWordsCount: dto.feedback.fluency.fillerWordsCount,
-        fillerWordsRatio: dto.feedback.fluency.fillerWordsRatio,
-        mostUsedWords: dto.feedback.fluency.mostUsedWords,
+        pausesPerMinute: fluency?.pausesPerMinute ?? fallback.fluency.pausesPerMinute,
+        fillerWordsCount: fluency?.fillerWordsCount ?? fallback.fluency.fillerWordsCount,
+        fillerWordsRatio: fluency?.fillerWordsRatio ?? fallback.fluency.fillerWordsRatio,
+        mostUsedWords: fluency?.mostUsedWords ?? fallback.fluency.mostUsedWords,
       },
     };
   }
