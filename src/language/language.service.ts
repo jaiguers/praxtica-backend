@@ -226,6 +226,31 @@ export class LanguageService {
           });
         });
 
+        // Escuchar transcripciones finales del usuario y persistirlas para el resumen final
+        eventEmitter.on('user.transcription.completed', (event) => {
+          const transcript = event.transcript?.trim();
+          if (!transcript) {
+            return;
+          }
+
+          const timestamp = Date.now();
+
+          this.logger.log(`🗣️ User [${sessionKey}]: ${transcript}`);
+          this.emitRealtimeEvent(sessionKey, {
+            type: 'session.event',
+            payload: {
+              sessionId: sessionKey,
+              role: 'user',
+              text: transcript,
+              isFinal: true,
+              timestamp,
+            },
+            timestamp,
+          });
+
+          void this.storeUserTranscription(sessionKey, transcript, '', timestamp);
+        });
+
         // Escuchar cuando María termina de hablar (transcripción completa)
         eventEmitter.on('assistant.transcript.done', (event) => {
           this.logger.log(`✅ Maria [${sessionKey}]: ${event.transcript}`);
