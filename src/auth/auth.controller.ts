@@ -80,6 +80,11 @@ export class AuthController {
     return this.authService.registerOutlookUser(userData);
   }
 
+  @Post('demo-login')
+  async demoLogin(@Body() credentials: { username: string; password: string }) {
+    return this.authService.loginDemoUser(credentials);
+  }
+
   @Get('github/callback')
   @UseGuards(AuthGuard('github'))
   async githubAuthCallback(@Req() req, @Res() res: Response) {

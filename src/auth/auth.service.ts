@@ -1,6 +1,7 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { timingSafeEqual } from 'crypto';
 import { User, UserDocument, AuthProvider } from './user.model';
 import { JwtService } from './jwt.service';
 
@@ -43,6 +44,7 @@ export class AuthService {
       sub: user._id.toString(),
       username: user.username,
       email: user.email,
+      isDemo: this.isDemoUser(user),
     };
     return this.jwtService.generateToken(payload);
   }
@@ -97,6 +99,7 @@ export class AuthService {
         username: user.username,
         name: user.name,
         email: user.email,
+        isDemo: this.isDemoUser(user),
         ranking: user.ranking,
         avatarUrl: user.avatarUrl,
         subscription: user.subscription,
@@ -106,6 +109,38 @@ export class AuthService {
       },
       token,
     };
+  }
+
+  async loginDemoUser(credentials: {
+    username: string;
+    password: string;
+  }) {
+    if (!this.isDemoLoginEnabled()) {
+      throw new UnauthorizedException('El acceso demo no esta habilitado');
+    }
+
+    const configuredUsername = process.env.DEMO_LOGIN_USERNAME || 'admin';
+    const configuredPassword = process.env.DEMO_LOGIN_PASSWORD;
+
+    if (!configuredPassword) {
+      throw new UnauthorizedException('El acceso demo no esta configurado');
+    }
+
+    const usernameMatches = this.safeCompare(
+      credentials.username ?? '',
+      configuredUsername,
+    );
+    const passwordMatches = this.safeCompare(
+      credentials.password ?? '',
+      configuredPassword,
+    );
+
+    if (!usernameMatches || !passwordMatches) {
+      throw new UnauthorizedException('Credenciales demo invalidas');
+    }
+
+    const user = await this.findOrCreateDemoUser(configuredUsername);
+    return this.login(user);
   }
 
   /**
@@ -399,4 +434,57 @@ export class AuthService {
       { new: true }
     );
   }
-} 
+
+  private isDemoLoginEnabled(): boolean {
+    return process.env.ENABLE_DEMO_LOGIN === 'true';
+  }
+
+  private getDemoUserEmail(): string {
+    return process.env.DEMO_LOGIN_EMAIL || 'demo-investor@praxtica.local';
+  }
+
+  private isDemoUser(user: Pick<UserDocument, 'email'>): boolean {
+    return user.email === this.getDemoUserEmail();
+  }
+
+  private safeCompare(input: string, expected: string): boolean {
+    const inputBuffer = Buffer.from(input, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+
+    if (inputBuffer.length !== expectedBuffer.length) {
+      return false;
+    }
+
+    return timingSafeEqual(inputBuffer, expectedBuffer);
+  }
+
+  private async findOrCreateDemoUser(username: string): Promise<UserDocument> {
+    const email = this.getDemoUserEmail();
+    const existingUser = await this.userModel.findOne({ email }).exec();
+
+    if (existingUser) {
+      if (existingUser.username !== username) {
+        existingUser.username = username;
+        await existingUser.save();
+      }
+      return existingUser;
+    }
+
+    return this.userModel.create({
+      email,
+      username,
+      name: 'Investor Demo',
+      avatarUrl: process.env.DEMO_LOGIN_AVATAR_URL || '',
+      subscription: {
+        plan: 'free',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        active: true,
+      },
+      challengeProgress: [],
+      practiceSessions: [],
+      languageTests: {},
+      currentLevels: {},
+    });
+  }
+}
